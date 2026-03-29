@@ -1,6 +1,7 @@
---- Created by mofuro.
+--- Created by https://github.com/Mofurka/StarboundTextboxInterface
 --- DateTime: 20.03.2026 11:04
-
+--- Please credit if you use or modify this code, thanks!
+--- Пожалуста, если вы используете или изменяете этот код, указывайте авторство, спасибо!
 -- ─────────────────────────── utf8 ───────────────────────────────────
 
 local function utf8_len(s)
@@ -162,6 +163,16 @@ end
 
 -- ─────────────────────────── Setup ───────────────────────────────────────────
 
+---@class TextboxSetupOptions
+---@field rect RectI
+---@field fontSize number
+---@field lineHeight number
+---@field onChanged fun(newText: string)
+
+
+---@public
+---@param widgetName string can be nil
+---@param options TextboxSetupOptions?
 function Textbox:setup(widgetName, options)
     options = options or {}
     local inst = Textbox.new()
@@ -861,6 +872,29 @@ function Textbox:_ensureCursorVisible()
     end
 end
 
+-- ─────────────────────────── helpers ────────────────────────────────
+
+function Textbox.showClipboardUnavailable()
+    local message = (
+            "Due to safety restrictions, OpenStarbound does not allow access to the system clipboard.\n" ..
+            "In your Starbound folder -> storage -> starbound.config, set alwaysAllowClipboard to true and restart the game.\n" ..
+            "\"safe\": {\n" ..
+            "    \"alwaysAllowClipboard\": true\n" ..
+            "}"
+    )
+    Textbox.showWarningPopup("Clipboard Access Unavailable", "Please change your settings to allow clipboard access", message)
+end
+
+
+function Textbox.showWarningPopup(title, subtitle, message)
+    local config = {
+        title = title,
+        subtitle = subtitle,
+        message = message,
+    }
+    player.interact("showPopup", config)
+end
+
 -- ─────────────────────────── prosessing ────────────────────────────────
 ---@protected
 function Textbox:_processInput(dt)
@@ -1074,6 +1108,10 @@ function Textbox:_processKeys(events)
                     self:_onTextChanged()
                 end
             elseif ctrl and key == "V" then
+                if not clipboard.available() then
+                    Textbox.showClipboardUnavailable()
+                    return
+                end
                 if clipboard.hasText() then
                     local t = clipboard.getText()
                     if t:find("\n") then
@@ -1196,10 +1234,15 @@ end
 
 -- ─────────────────────────── Public API ──────────────────────────────────────
 
+---@public
+---@return string
 function Textbox:getText()
     return self.text
 end
 
+---@public
+---@overload fun(text: string)
+---@overload fun(text: string[])
 function Textbox:setText(text)
     if type(text) == "table" then
         text = table.concat(text, "\n")
@@ -1215,6 +1258,8 @@ function Textbox:setText(text)
     self:_resetBlink()
 end
 
+---@public
+---@return boolean
 function Textbox:focus()
     self.focused = true
     widget.focus(self.fakeTextbox)
@@ -1223,6 +1268,8 @@ function Textbox:focus()
     self:_invalidateAll()
 end
 
+---@public
+---@return boolean
 function Textbox:blur()
     self.focused = false
     widget.blur(self.fakeTextbox)
@@ -1230,10 +1277,13 @@ function Textbox:blur()
     self:_invalidateAll()
 end
 
+---@public
+---@return boolean
 function Textbox:hasFocus()
     return self.focused
 end
 
+---@public
 function Textbox:clear()
     self.text = ""
     self.charLen = 0
@@ -1250,16 +1300,25 @@ function Textbox:clear()
     end
 end
 
+---@public
+---@param fn fun(newText: string)
 function Textbox:setOnChanged(fn)
     self.onChanged = fn
 end
+
+---@public
+---@param enabled boolean
 function Textbox.setDebug(enabled)
     DEBUG = enabled
 end
 
+---@public
+---@return string
 function Textbox:destroy()
     self:_cleanup()
-    activeTextboxes[self.uuid] = nil
+    local uuid = self.uuid
+    activeTextboxes[uuid] = nil
+    return uuid
 end
 
 ---@protected
@@ -1269,10 +1328,16 @@ function Textbox:_cleanup()
     pane.removeWidget(self.path)
 end
 
+-- ─────────────────────────── Getters/Setters ─────────────────────────────────
+
+---@public
+---@return number
 function Textbox:getCursorPos()
     return self.cursorPos
 end
 
+---@public
+---@param pos number
 function Textbox:setCursorPos(pos)
     self.cursorPos = clamp(pos, 0, self.charLen)
     self.selAnchor = nil
@@ -1281,17 +1346,26 @@ function Textbox:setCursorPos(pos)
     self:_invalidateCaret()
 end
 
-function Textbox:setupTabInsert(text)
+---@public
+---@param text string
+function Textbox:setTabInsertText(text)
     self.tabSpaces = text
 end
 
+---@public
+---@return number
 function Textbox:getLineCount()
     return #self.lines
 end
+
+---@public
+---@return number
 function Textbox:getScroll()
     return self.scrollY
 end
 
+---@public
+---@param scrollY number
 function Textbox:setScroll(scrollY)
     local old = self.scrollY
     self.scrollY = clamp(scrollY, 0, self:_getMaxScroll())
@@ -1300,19 +1374,29 @@ function Textbox:setScroll(scrollY)
     end
 end
 
+---@public
+---@param color number[] {r, g, b, a}
 function Textbox:setCaretColor(color)
     self.caretColor = color
     self:_invalidateCaret()
 end
+
+---@public
+---@param color number[] {r, g, b, a}
 function Textbox:setSelectionColor(color)
     self.selectionColor = color
     self:_invalidateCaret()
 end
+
+---@public
+---@param color number[] {r, g, b, a}
 function Textbox:setTextColor(color)
     self.textColor = color
     self:_invalidateText()
 end
 
+---@public
+---@param size number
 function Textbox:setFontSize(size)
     if self.fontSize == size then
         return
@@ -1326,25 +1410,33 @@ function Textbox:setFontSize(size)
     self:_ensureCursorVisible()
 end
 
+---@public
+---@return number
 function Textbox:getFontSize()
     return self.fontSize
 end
 
+---@public
+---@param hint string
 function Textbox:setHint(hint)
     self.hint = hint
     self:_invalidateText()
 end
 
+---@public
+---@return string
 function Textbox:getHint()
     return self.hint
 end
 
+---@public
+---@param color number[] {r, g, b, a}
 function Textbox:setHintColor(color)
     self.hintColor = color
     self:_invalidateText()
 end
 
--- ─────────────────────────── lifecykle ────────────────────────────────
+-- ─────────────────────────── lifecyle ────────────────────────────────
 
 function Textbox.init()
     assert(pane, "Textbox: pane API not available. Include this script in an interface.")

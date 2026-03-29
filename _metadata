@@ -1,0 +1,11 @@
+{
+  "author": "D.",
+  "description": "This script add binding for input creation with a carret.",
+  "friendlyName": "Starbound Textbox Interface",
+  "name": "MultiLineTextBox",
+  "priority": 10001,
+  "version": "1.0.0",
+  "requires": [
+    "opensb_base"
+  ]
+}

@@ -78,6 +78,15 @@ local DEFAULT_LINE_HEIGHT = 12
 local KEY_REPEAT_DELAY = 0.5
 local KEY_REPEAT_INTERVAL = 0.05
 
+local REPEATABLE_KEYS = {
+    Backspace = true,
+    Del = true,
+    Left = true,
+    Right = true,
+    Up = true,
+    Down = true
+}
+
 local function debugMessage(msg, ...)
     if DEBUG then
         sb.logInfo("[tbx.lua] " .. msg, ...)
@@ -217,12 +226,11 @@ function Textbox:setup(widgetName, options)
     local lytPath = isChild and (widgetName .. "." .. lytShort) or lytShort
     inst.path = lytPath
 
-        if isChild then
-            widget.removeChild(widgetName, lytPath)
-        else
-            pane.removeWidget(lytPath)
-        end
-
+    if isChild then
+        widget.removeChild(widgetName, lytPath)
+    else
+        pane.removeWidget(lytPath)
+    end
 
     local lytConfig = { type = "layout", rect = rect, layoutType = "basic" }
     if isChild then
@@ -294,7 +302,7 @@ end
 
 ---@protected
 function Textbox:_destroyMeasureLabel()
-    pane.removeWidget( self.measureLabelPath)
+    pane.removeWidget(self.measureLabelPath)
     self.cache = {}
 end
 
@@ -914,8 +922,8 @@ function Textbox:_processInput(dt)
             if key == "LCtrl" or key == "RCtrl" then
                 self._ctrlHeld = true
             end
-            if key == "Backspace" or key == "Delete" then
-                self._heldKey = key;
+            if REPEATABLE_KEYS[key] then
+                self._heldKey = key
                 self._heldTimer = 0
             end
         elseif ev.type == "KeyUp" and data then
@@ -928,6 +936,7 @@ function Textbox:_processInput(dt)
             end
             if key == self._heldKey then
                 self._heldKey = nil
+                self._heldTimer = 0
             end
         end
     end
@@ -942,7 +951,19 @@ function Textbox:_processInput(dt)
         if self._heldTimer >= KEY_REPEAT_DELAY then
             local elapsed = self._heldTimer - KEY_REPEAT_DELAY
             if math.floor(elapsed / KEY_REPEAT_INTERVAL) > 0 then
-                self:_doDelete(self._heldKey)
+                local fakeEvent = {
+                    type = "KeyDown",
+                    data = {
+                        key = self._heldKey,
+                        mods = {
+                            LShift = self._shiftHeld,
+                            RShift = self._shiftHeld,
+                            LCtrl = self._ctrlHeld,
+                            RCtrl = self._ctrlHeld,
+                        }
+                    }
+                }
+                self:_processKeys({ fakeEvent })
                 self._heldTimer = KEY_REPEAT_DELAY + (elapsed % KEY_REPEAT_INTERVAL)
             end
         end
@@ -951,22 +972,7 @@ function Textbox:_processInput(dt)
     self:_pollFakeTextbox()
     self:_processKeys(events)
 end
----@protected
-function Textbox:_doDelete(key)
-    if key == "Backspace" then
-        if self._ctrlHeld then
-            self:_deleteWordBack()
-        else
-            self:_deleteBack()
-        end
-    else
-        if self._ctrlHeld then
-            self:_deleteWordForward()
-        else
-            self:_deleteForward()
-        end
-    end
-end
+
 ---@protected
 function Textbox:_processMouseEvents(events)
     if not self.carretCanvas then

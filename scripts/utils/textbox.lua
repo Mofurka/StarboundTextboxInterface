@@ -161,6 +161,12 @@ Textbox = {
     hint = nil,
     hintColor = { 128, 128, 128, 180 },
 
+    -- auto size
+    minHeight = nil,
+    maxHeight = nil,
+    onSizeChange = nil,
+    currentHeight = nil,
+
     -- my private shit pls dont touch it
     _mouseWasDown = false,
     _mouseLeftHeld = false,
@@ -182,18 +188,19 @@ end
 -- ─────────────────────────── Setup ───────────────────────────────────────────
 
 ---@class TextboxSetupOptions
----@field rect RectI
----@field fontSize number
----@field lineHeight number
----@field hint string
----@field textColor number[] {r, g, b, a}
----@field hintColor number[] {r, g, b, a}
----@field selectionColor number[] {r, g, b, a}
----@field caretColor number[] {r, g, b, a}
----@field onChanged fun(newText: string)
----@field onEnterKey fun()
----@field onEscapeKey fun()
-
+---@field rect? RectI
+---@field fontSize? number
+---@field lineHeight? number
+---@field hint? string
+---@field textColor number[]? {r, g, b, a}
+---@field hintColor number[]? {r, g, b, a}
+---@field selectionColor number[]? {r, g, b, a}
+---@field caretColor number[]? {r, g, b, a}
+---@field onChanged fun(newText: string)?
+---@field onEnterKey fun()?
+---@field onEscapeKey fun()?
+---@field maxHeight number?
+---@field onSizeChange fun(newHeight: number[] {width, height})?
 
 ---@public
 ---@param widgetName string can be nil
@@ -206,6 +213,10 @@ function Textbox:setup(widgetName, options)
     inst.lineHeight = options.lineHeight or DEFAULT_LINE_HEIGHT
     inst.lineHeightRatio = inst.lineHeight / inst.fontSize
     inst.onChanged = options.onChanged
+    inst.onEnterKey = options.onEnterKey
+    inst.onEscapeKey = options.onEscapeKey
+    inst.maxHeight = options.maxHeight
+    inst.onSizeChange = options.onSizeChange
 
     local isChild = widgetName:find("%.")
     local lytShort = "__tbx_lyt_" .. inst.uuid
@@ -219,6 +230,9 @@ function Textbox:setup(widgetName, options)
             rect = { 0, 0, 200, 200 }
         end
     end
+
+    inst.minHeight = rect[4]
+    inst.currentHeight = rect[4]
 
     local lytPath = isChild and (widgetName .. "." .. lytShort) or lytShort
     inst.path = lytPath
@@ -394,12 +408,8 @@ end
 
 ---@protected
 function Textbox:_getWrapWidth()
-    if self.textCanvas then
-        local sz = self.textCanvas:size()
-        return math.max(0, sz[1] - PAD * 2)
-    end
-
-    return math.max(0, self.wrapWidth or 0)
+    local sz = self.textCanvas:size()
+    return math.max(0, sz[1] - PAD * 2)
 end
 
 ---@protected
@@ -760,6 +770,7 @@ function Textbox:_onTextChanged()
 
     self:_invalidateAll()
     self:_reflow()
+    self:_updateAutoHeight()
     self:_ensureCursorVisible()
     self:_resetBlink()
 
@@ -775,6 +786,13 @@ function Textbox:_resetBlink()
 end
 
 -- ─────────────────────────── navi ───────────────────────────────
+---@protected
+function Textbox:_ensureSelection(shift)
+    if shift and self.selAnchor == nil then
+        self.selAnchor = self.cursorPos
+    end
+end
+
 ---@protected
 function Textbox:_finishMove(shift)
     if not shift then
@@ -792,9 +810,7 @@ function Textbox:_moveCursorLeft(shift)
         self:_finishMove(false);
         return
     end
-    if shift and self.selAnchor == nil then
-        self.selAnchor = self.cursorPos
-    end
+    self:_ensureSelection(shift)
     if self.cursorPos > 0 then
         self.cursorPos = self.cursorPos - 1
     end
@@ -808,9 +824,7 @@ function Textbox:_moveCursorRight(shift)
         self:_finishMove(false);
         return
     end
-    if shift and self.selAnchor == nil then
-        self.selAnchor = self.cursorPos
-    end
+    self:_ensureSelection(shift)
     if self.cursorPos < self.charLen then
         self.cursorPos = self.cursorPos + 1
     end
@@ -818,27 +832,21 @@ function Textbox:_moveCursorRight(shift)
 end
 ---@protected
 function Textbox:_moveCursorUp(shift)
-    if shift and self.selAnchor == nil then
-        self.selAnchor = self.cursorPos
-    end
+    self:_ensureSelection(shift)
     local li, x = self:_cursorToLineX(self.cursorPos)
     self.cursorPos = li <= 1 and 0 or self:_xToLinePos(li - 1, x)
     self:_finishMove(shift)
 end
 ---@protected
 function Textbox:_moveCursorDown(shift)
-    if shift and self.selAnchor == nil then
-        self.selAnchor = self.cursorPos
-    end
+    self:_ensureSelection(shift)
     local li, x = self:_cursorToLineX(self.cursorPos)
     self.cursorPos = li >= #self.lines and self.charLen or self:_xToLinePos(li + 1, x)
     self:_finishMove(shift)
 end
 ---@protected
 function Textbox:_moveCursorHome(shift)
-    if shift and self.selAnchor == nil then
-        self.selAnchor = self.cursorPos
-    end
+    self:_ensureSelection(shift)
     local li = self:_cursorToLineX(self.cursorPos)
     local line = self.lines[li]
     if line then
@@ -848,9 +856,7 @@ function Textbox:_moveCursorHome(shift)
 end
 ---@protected
 function Textbox:_moveCursorEnd(shift)
-    if shift and self.selAnchor == nil then
-        self.selAnchor = self.cursorPos
-    end
+    self:_ensureSelection(shift)
     local li = self:_cursorToLineX(self.cursorPos)
     local line = self.lines[li]
     if line then
@@ -864,17 +870,13 @@ function Textbox:_moveCursorEnd(shift)
 end
 ---@protected
 function Textbox:_moveCursorWordLeft(shift)
-    if shift and self.selAnchor == nil then
-        self.selAnchor = self.cursorPos
-    end
+    self:_ensureSelection(shift)
     self.cursorPos = self:_wordBoundaryLeft(self.cursorPos)
     self:_finishMove(shift)
 end
 ---@protected
 function Textbox:_moveCursorWordRight(shift)
-    if shift and self.selAnchor == nil then
-        self.selAnchor = self.cursorPos
-    end
+    self:_ensureSelection(shift)
     self.cursorPos = self:_wordBoundaryRight(self.cursorPos)
     self:_finishMove(shift)
 end
@@ -886,7 +888,7 @@ function Textbox:_getContentHeight()
 end
 ---@protected
 function Textbox:_getViewHeight()
-    return self.carretCanvas and self.carretCanvas:size()[2] or 100
+    return self.carretCanvas:size()[2]
 end
 ---@protected
 function Textbox:_getMaxScroll()
@@ -1035,6 +1037,7 @@ function Textbox:_processMouseEvents(events)
                 self.scrollY = clamp(
                         self.scrollY - ev.data.mouseWheel * self.lineHeight * 3,
                         0, self:_getMaxScroll())
+                self:_invalidateCaret()
                 self.textDirty = true
             end
 
@@ -1265,6 +1268,46 @@ function Textbox:_drawCaret()
     self.caretDirty = false
 end
 
+--@protected
+function Textbox:_updateAutoHeight()
+    if not self.maxHeight then
+        return
+    end
+
+    local contentHeight = self:_getContentHeight() + PAD * 2
+    local newHeight = clamp(contentHeight, self.minHeight, self.maxHeight)
+
+    if newHeight ~= self.currentHeight then
+        self.currentHeight = newHeight
+
+        local newRect = { self.rect[1], self.rect[2], self.rect[3], newHeight }
+
+        local width = newRect[3] - newRect[1]
+        local height = newRect[4] - newRect[2]
+
+        -- layout
+        widget.setSize(self.path, { width, height })
+
+        -- canvases
+        local canvasSize = { width - 20, height - 1 }
+        widget.setSize(self.path .. ".__tbx_text_canvas", canvasSize)
+        widget.setSize(self.path .. ".__tbx_carret_", canvasSize)
+
+        -- scroll area
+        widget.setSize(self.path .. ".__tbx_sa_", { width + 20, height })
+
+        self.rect = newRect
+
+        self:_invalidateAll()
+        self:_reflow()
+        self:_ensureCursorVisible()
+
+        if self.onSizeChange then
+            self.onSizeChange({ width, height })
+        end
+    end
+end
+
 ---@protected
 function Textbox:_draw()
     if self.textDirty then
@@ -1297,6 +1340,7 @@ function Textbox:setText(text)
     self.scrollY = 0
     self:_invalidateAll()
     self:_reflow()
+    self:_updateAutoHeight()
     self:_ensureCursorVisible()
     self:_resetBlink()
 end
@@ -1335,12 +1379,8 @@ function Textbox:clear()
     self.scrollY = 0
     self:_invalidateAll()
     self:_reflow()
-    if self.textCanvas then
-        self.textCanvas:clear()
-    end
-    if self.carretCanvas then
-        self.carretCanvas:clear()
-    end
+    self.textCanvas:clear()
+    self.carretCanvas:clear()
 end
 
 ---@public
@@ -1491,12 +1531,6 @@ function Textbox:getHint()
     return self.hint
 end
 
----@public
----@param color number[] {r, g, b, a}
-function Textbox:setHintColor(color)
-    self.hintColor = color
-    self:_invalidateText()
-end
 
 -- ─────────────────────────── lifecyle ────────────────────────────────
 

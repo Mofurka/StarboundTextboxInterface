@@ -1092,7 +1092,7 @@ function Textbox:_processKeys(events)
                 elseif self.onEnterKey then
                     self.onEnterKey()
                 end
-            elseif key == "Escape" then
+            elseif key == "Esc" then
                 if self.onEscapeKey then
                     self.onEscapeKey()
                 end

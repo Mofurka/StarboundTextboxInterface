@@ -139,7 +139,12 @@ Textbox = {
     caretColor = CARET_COLOR,
     selectionColor = SELECTION_COLOR,
     cache = {},
+
+    -- callbacks
     onChanged = nil,
+    onEnterKey = nil,
+    onEscapeKey = nil,
+
     hint = nil,
     hintColor = { 128, 128, 128, 180 },
 
@@ -167,7 +172,14 @@ end
 ---@field rect RectI
 ---@field fontSize number
 ---@field lineHeight number
+---@field hint string
+---@field textColor number[] {r, g, b, a}
+---@field hintColor number[] {r, g, b, a}
+---@field selectionColor number[] {r, g, b, a}
+---@field caretColor number[] {r, g, b, a}
 ---@field onChanged fun(newText: string)
+---@field onEnterKey fun()
+---@field onEscapeKey fun()
 
 
 ---@public
@@ -180,7 +192,14 @@ function Textbox:setup(widgetName, options)
     inst.fontSize = options.fontSize or DEFAULT_FONT_SIZE
     inst.lineHeight = options.lineHeight or DEFAULT_LINE_HEIGHT
     inst.lineHeightRatio = inst.lineHeight / inst.fontSize
+    inst.hint = options.hint
+    inst.textColor = options.textColor or inst.textColor
+    inst.hintColor = options.hintColor or inst.hintColor
+    inst.selectionColor = options.selectionColor or inst.selectionColor
+    inst.caretColor = options.caretColor or inst.caretColor
     inst.onChanged = options.onChanged
+    inst.onEnterKey = options.onEnterKey
+    inst.onEscapeKey = options.onEscapeKey
 
     local isChild = widgetName:find("%.")
     local lytShort = "__tbx_lyt_" .. inst.uuid
@@ -1068,7 +1087,15 @@ function Textbox:_processKeys(events)
                     self:_deleteForward()
                 end
             elseif key == "Return" then
-                self:_insertText("\n")
+                if shift then
+                    self:_insertText("\n")
+                elseif self.onEnterKey then
+                    self.onEnterKey()
+                end
+            elseif key == "Escape" then
+                if self.onEscapeKey then
+                    self.onEscapeKey()
+                end
             elseif key == "Tab" then
                 self:_insertText(self.tabSpaces or "  ")
             elseif key == "Left" then
@@ -1307,6 +1334,18 @@ function Textbox:setOnChanged(fn)
 end
 
 ---@public
+---@param fn fun()
+function Textbox:setOnEnterKey(fn)
+    self.onEnterKey = fn
+end
+
+---@public
+---@param fn fun()
+function Textbox:setOnEscapeKey(fn)
+    self.onEscapeKey = fn
+end
+
+---@public
 ---@param enabled boolean
 function Textbox.setDebug(enabled)
     DEBUG = enabled
@@ -1393,6 +1432,13 @@ end
 function Textbox:setTextColor(color)
     self.textColor = color
     self:_invalidateText()
+end
+
+---@public
+---@param color number[] {r, g, b, a}
+function Textbox:setHintColor(color)
+    self.hintColor = color
+    self:_invalidateCaret()
 end
 
 ---@public

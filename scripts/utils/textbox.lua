@@ -1174,7 +1174,7 @@ function Textbox:_drawText()
         verticalAnchor = "top",
     }
 
-    if self.charLen == 0 and self.hint and self.hint ~= "" and not self.focused then
+    if self.charLen == 0 and self.hint and self.hint ~= "" then
         drawParams.position[2] = baseY
         canvas:drawText(self.hint, drawParams, fs, self.hintColor)
     else

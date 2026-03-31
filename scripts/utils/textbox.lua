@@ -838,7 +838,7 @@ function Textbox:_getContentHeight()
 end
 ---@protected
 function Textbox:_getViewHeight()
-    return self.carretCanvas and self.carretCanvas:size()[2] or 100
+    return self.carretCanvas:size()[2]
 end
 ---@protected
 function Textbox:_getMaxScroll()
@@ -1218,7 +1218,7 @@ function Textbox:_drawCaret()
     self.caretDirty = false
 end
 
----@protected
+--@protected
 function Textbox:_updateAutoHeight()
     if not self.maxHeight then
         return
@@ -1230,17 +1230,21 @@ function Textbox:_updateAutoHeight()
     if newHeight ~= self.currentHeight then
         self.currentHeight = newHeight
 
-        -- update layout size
         local newRect = { self.rect[1], self.rect[2], self.rect[3], newHeight }
-        widget.setSize(self.path, { newRect[3], newRect[4] })
 
-        -- update canvases
-        local canvasSize = { newRect[3] - 20, newRect[4] - 1 }
+        local width = newRect[3] - newRect[1]
+        local height = newRect[4] - newRect[2]
 
+        -- layout
+        widget.setSize(self.path, { width, height })
+
+        -- canvases
+        local canvasSize = { width - 20, height - 1 }
         widget.setSize(self.path .. ".__tbx_text_canvas", canvasSize)
         widget.setSize(self.path .. ".__tbx_carret_", canvasSize)
-        widget.setSize(self.path .. ".__tbx_sa_", {newRect[3] + 20, newRect[4]})
-        widget.setSize(self.path .. "__tbx_lyt_" .. self.uuid, { newRect[3], newRect[4] })
+
+        -- scroll area
+        widget.setSize(self.path .. ".__tbx_sa_", { width + 20, height })
 
         self.rect = newRect
 
@@ -1249,7 +1253,7 @@ function Textbox:_updateAutoHeight()
         self:_ensureCursorVisible()
 
         if self.onSizeChange then
-            self.onSizeChange({ newRect[3], newRect[4] })
+            self.onSizeChange({ width, height })
         end
     end
 end
@@ -1326,9 +1330,7 @@ function Textbox:clear()
     self:_invalidateAll()
     self:_reflow()
     self.textCanvas:clear()
-    if self.carretCanvas then
-        self.carretCanvas:clear()
-    end
+    self.carretCanvas:clear()
 end
 
 ---@public

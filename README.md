@@ -28,11 +28,22 @@ A lightweight and flexible textbox implementation for Starbound UI, built on top
 
 ```lua
 local textbox = Textbox:setup("widgetName", {
-    rect = {0,0,200,200}, -- OPTIONAL,
+    -- All the provided parameters are optional
+    rect = {0,0,200,200},
     fontSize = 8,
     lineHeight = 12,
+    hint = "Textbox hint",
+    hintColor = {255, 255, 255},
+    selectionColor = {255, 255, 255},
+    caretColor = {255, 255, 255},
     onChanged = function(text)
         sb.logInfo("Text changed: %s", text)
+    end,
+    onEnterKey = function()
+        sb.logInfo("Enter key pressed")
+    end,
+    onEscapeKey = function()
+        sb.logInfo("Escape key pressed")
     end
 })
 ```
@@ -132,6 +143,18 @@ Set callback fired each time textbox text changes.
 
 ---
 
+#### `nil` textbox:setOnEnterKey(`fun()` fn)
+
+Set callback fired on Enter key.
+
+---
+
+#### `nil` textbox:setOnEscapeKey(`fun()` fn)
+
+Set callback fired on Escape key.
+
+---
+
 #### `nil` Textbox.setDebug(`boolean` enabled)
 
 Enable or disable debug logging for the textbox module.
@@ -195,6 +218,12 @@ Set selection highlight color as `{r, g, b, a}`.
 #### `nil` textbox:setTextColor(`number[]` color)
 
 Set text color as `{r, g, b, a}`.
+
+---
+
+#### `nil` textbox:setHintColor(`number[]` color)
+
+Set hint color as `{r, g, b, a}`.
 
 ---
 
@@ -262,13 +291,17 @@ Cleanup and destroy all active textboxes.
 | Ctrl + C           | Copy               |
 | Ctrl + X           | Cut                |
 | Ctrl + V           | Paste              |
-| Enter              | New line           |
+| Shift + Enter      | New line           |
 
 ---
 
 ## License
 
 Free to use and modify. Attribution is appreciated.
+
+## Contributors
+
+* @KrashV (Degranon)
 
 ## Demonstation
 [Video](https://youtu.be/hw2bQblKkdk)

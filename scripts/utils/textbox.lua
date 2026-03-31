@@ -46,6 +46,10 @@ local function isWordChar(ch)
     return #ch > 1 or ch:match("[%w_]") ~= nil
 end
 
+local function isHorizontalSpace(ch)
+    return ch == " "
+end
+
 -- ─────────────────────────── modules ────────────────────────────
 
 local activeTextboxes = {}
@@ -208,11 +212,6 @@ function Textbox:setup(widgetName, options)
     inst.fontSize = options.fontSize or DEFAULT_FONT_SIZE
     inst.lineHeight = options.lineHeight or DEFAULT_LINE_HEIGHT
     inst.lineHeightRatio = inst.lineHeight / inst.fontSize
-    inst.hint = options.hint
-    inst.textColor = options.textColor or inst.textColor
-    inst.hintColor = options.hintColor or inst.hintColor
-    inst.selectionColor = options.selectionColor or inst.selectionColor
-    inst.caretColor = options.caretColor or inst.caretColor
     inst.onChanged = options.onChanged
     inst.onEnterKey = options.onEnterKey
     inst.onEscapeKey = options.onEscapeKey
@@ -433,9 +432,29 @@ function Textbox:_reflow()
     end
 
     local lineStartCI = 1
-    local lineText = ""
+    local lineChars = {}
     local charXs = {}
     local lineWidth = 0
+    local lastBreakIndex = nil
+
+    local function rebuildLineMetrics()
+        charXs = {}
+        for i = 1, #lineChars do
+            charXs[i] = self:_lineTextWidth(table.concat(lineChars, "", 1, i - 1))
+        end
+        lineWidth = self:_lineTextWidth(table.concat(lineChars))
+    end
+
+    local function flushLine(endIdx, endsWithNewline)
+        local textPart = table.concat(lineChars)
+        lines[#lines + 1] = {
+            startIdx = lineStartCI,
+            endIdx = endIdx,
+            charXs = charXs,
+            width = lineWidth,
+            text = endsWithNewline and (textPart .. "\n") or textPart,
+        }
+    end
 
     local bi = 1
     for ci = 1, self.charLen do
@@ -444,39 +463,64 @@ function Textbox:_reflow()
 
         if ch == "\n" then
             charXs[#charXs + 1] = lineWidth
-            lines[#lines + 1] = {
-                startIdx = lineStartCI,
-                endIdx = ci,
-                charXs = charXs,
-                width = lineWidth,
-                text = lineText .. "\n",
-            }
+            flushLine(ci, true)
 
             lineStartCI = ci + 1
-            lineText = ""
+            lineChars = {}
             charXs = {}
             lineWidth = 0
+            lastBreakIndex = nil
         else
-            local nextText = lineText .. ch
-            local nextWidth = self:_lineTextWidth(nextText)
+            lineChars[#lineChars + 1] = ch
+            charXs[#charXs + 1] = lineWidth
+            lineWidth = self:_lineTextWidth(table.concat(lineChars))
 
-            if nextWidth > maxW and lineText ~= "" then
-                lines[#lines + 1] = {
-                    startIdx = lineStartCI,
-                    endIdx = ci - 1,
-                    charXs = charXs,
-                    width = lineWidth,
-                    text = lineText,
-                }
+            if isHorizontalSpace(ch) then
+                lastBreakIndex = #lineChars
+            end
 
-                lineStartCI = ci
-                lineText = ch
-                charXs = { 0 }
-                lineWidth = self:_lineTextWidth(ch)
-            else
-                charXs[#charXs + 1] = lineWidth
-                lineText = nextText
-                lineWidth = nextWidth
+            if lineWidth > maxW and #lineChars > 1 then
+                if lastBreakIndex and lastBreakIndex < #lineChars then
+                    local wrapCount = lastBreakIndex
+                    local wrapText = table.concat(lineChars, "", 1, wrapCount)
+                    local wrapCharXs = {}
+                    for i = 1, wrapCount do
+                        wrapCharXs[i] = charXs[i]
+                    end
+
+                    lines[#lines + 1] = {
+                        startIdx = lineStartCI,
+                        endIdx = lineStartCI + wrapCount - 1,
+                        charXs = wrapCharXs,
+                        width = self:_lineTextWidth(wrapText),
+                        text = wrapText,
+                    }
+
+                    local restChars = {}
+                    for i = wrapCount + 1, #lineChars do
+                        restChars[#restChars + 1] = lineChars[i]
+                    end
+
+                    lineStartCI = lineStartCI + wrapCount
+                    lineChars = restChars
+                    lastBreakIndex = nil
+                    rebuildLineMetrics()
+
+                    for i = 1, #lineChars do
+                        if isHorizontalSpace(lineChars[i]) then
+                            lastBreakIndex = i
+                        end
+                    end
+                else
+                    local overflowChar = lineChars[#lineChars]
+                    flushLine(ci - 1, false)
+
+                    lineStartCI = ci
+                    lineChars = { overflowChar }
+                    charXs = { 0 }
+                    lineWidth = self:_lineTextWidth(overflowChar)
+                    lastBreakIndex = isHorizontalSpace(overflowChar) and 1 or nil
+                end
             end
         end
 
@@ -484,13 +528,7 @@ function Textbox:_reflow()
     end
 
     if lineStartCI <= self.charLen then
-        lines[#lines + 1] = {
-            startIdx = lineStartCI,
-            endIdx = self.charLen,
-            charXs = charXs,
-            width = lineWidth,
-            text = lineText,
-        }
+        flushLine(self.charLen, false)
     else
         lines[#lines + 1] = {
             startIdx = lineStartCI,
@@ -687,7 +725,19 @@ function Textbox:_deleteWordBack()
     if self.cursorPos <= 0 then
         return
     end
-    local newPos = self:_wordBoundaryLeft(self.cursorPos)
+
+    local prevChar = utf8_charAt(self.text, self.cursorPos)
+    local newPos
+
+    if prevChar == "\n" then
+        newPos = self.cursorPos - 1
+        while newPos > 0 and utf8_charAt(self.text, newPos) == "\n" do
+            newPos = newPos - 1
+        end
+    else
+        newPos = self:_wordBoundaryLeft(self.cursorPos)
+    end
+
     if newPos < self.cursorPos then
         self:_splice(newPos, self.cursorPos)
         self.cursorPos = newPos

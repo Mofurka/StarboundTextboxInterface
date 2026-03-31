@@ -256,6 +256,7 @@ function Textbox:setup(widgetName, options)
     widget.addChild(lytPath, {
         type = "textbox", position = { -1000, -1000 }, maxWidth = 200,
         textAlign = "left", callback = "null", enterKey = "null",
+        escapeKey = "null", regex = "[\\s\\S]*" -- thanks Deg for regex
     }, "__tbx_fake_textbox")
     inst.fakeTextbox = lytPath .. ".__tbx_fake_textbox"
 
@@ -891,29 +892,6 @@ function Textbox:_ensureCursorVisible()
     end
 end
 
--- ─────────────────────────── helpers ────────────────────────────────
-
-function Textbox.showClipboardUnavailable()
-    local message = (
-            "Due to safety restrictions, OpenStarbound does not allow access to the system clipboard.\n" ..
-            "In your Starbound folder -> storage -> starbound.config, set alwaysAllowClipboard to true and restart the game.\n" ..
-            "\"safe\": {\n" ..
-            "    \"alwaysAllowClipboard\": true\n" ..
-            "}"
-    )
-    Textbox.showWarningPopup("Clipboard Access Unavailable", "Please change your settings to allow clipboard access", message)
-end
-
-
-function Textbox.showWarningPopup(title, subtitle, message)
-    local config = {
-        title = title,
-        subtitle = subtitle,
-        message = message,
-    }
-    player.interact("showPopup", config)
-end
-
 -- ─────────────────────────── prosessing ────────────────────────────────
 ---@protected
 function Textbox:_processInput(dt)
@@ -1058,9 +1036,7 @@ function Textbox:_pollFakeTextbox()
     end
     local txt = widget.getText(self.fakeTextbox)
     if txt and txt ~= "" then
-        if not txt:find("\n") then
-            self:_insertText(txt)
-        end
+        self:_insertText(txt)
         widget.setText(self.fakeTextbox, "")
     end
 end
@@ -1133,20 +1109,6 @@ function Textbox:_processKeys(events)
                     clipboard.setText(sel)
                     self:_deleteSelection();
                     self:_onTextChanged()
-                end
-            elseif ctrl and key == "V" then
-                if not clipboard.available() then
-                    Textbox.showClipboardUnavailable()
-                    return
-                end
-                if clipboard.hasText() then
-                    local t = clipboard.getText()
-                    if t:find("\n") then
-                        t = t:gsub("\r", "")
-                        if t and t ~= "" then
-                            self:_insertText(t)
-                        end
-                    end
                 end
             end
         end

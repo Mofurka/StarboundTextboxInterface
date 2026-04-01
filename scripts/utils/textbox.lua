@@ -3,6 +3,8 @@
 --- Please credit if you use or modify this code, thanks!
 --- Пожалуста, если вы используете или изменяете этот код, указывайте авторство, спасибо!
 -- ─────────────────────────── utf8 ───────────────────────────────────
+require("/scripts/vec2.lua")
+require("/scripts/rect.lua")
 
 local function utf8_len(s)
     if not s or s == "" then
@@ -128,6 +130,7 @@ end
 ---@class Textbox
 Textbox = {
     rect = nil,
+    parrentWidgetPath = nil,
     path = nil,
     textCanvas = nil,
     carretCanvas = nil,
@@ -225,6 +228,7 @@ function Textbox:setup(widgetName, options)
     inst.tabSpaces = options.tabInsertText or inst.tabSpaces
     inst.verticalAlign = options.verticalAlign or "bottom"
     inst.textOffsetY = options.textOffsetY or 0
+    inst.parrentWidgetPath = widgetName
 
     local lytShort = "__tbx_lyt_" .. inst.uuid
 
@@ -956,7 +960,7 @@ end
 
 -- ─────────────────────────── prosessing ────────────────────────────────
 ---@protected
-function Textbox:_processInput(dt)
+function Textbox:_processInput(dt, events, mousePos)
     self.caretTimer = self.caretTimer + dt
     if self.caretTimer >= CARET_BLINK_INTERVAL then
         self.caretTimer = self.caretTimer - CARET_BLINK_INTERVAL
@@ -969,7 +973,6 @@ function Textbox:_processInput(dt)
         return
     end
 
-    local events = input.events() or {}
 
     for _, ev in ipairs(events) do
         local data = ev.data
@@ -1000,7 +1003,7 @@ function Textbox:_processInput(dt)
         end
     end
 
-    self:_processMouseEvents(events)
+    self:_processMouseEvents(events, mousePos)
     if not self.focused then
         return
     end
@@ -1033,19 +1036,53 @@ function Textbox:_processInput(dt)
 end
 
 ---@protected
-function Textbox:_processMouseEvents(events)
+function Textbox:_getWidgetScreenRect()
+    local localPos = vec2.add(pane.getPosition(), widget.getPosition(self.parrentWidgetPath))
+    local scale = interface.scale()
+    local screenPos = vec2.mul(localPos, scale)
+    local size = vec2.mul(self.carretCanvas:size(), scale)
+
+    return {
+        screenPos[1],
+        screenPos[2],
+        screenPos[1] + size[1],
+        screenPos[2] + size[2]
+    }
+end
+
+---@protected
+function Textbox:_getMouseHit(mouseScreen)
+    if not self.carretCanvas then
+        return false, nil, nil
+    end
+
+    local widgetRect = self:_getWidgetScreenRect()
+    if not rect.contains(widgetRect, mouseScreen) then
+        return false, mouseScreen, widgetRect
+    end
+
+    local scale = interface.scale()
+    local localMouse = {
+        (mouseScreen[1] - widgetRect[1]) / scale,
+        (mouseScreen[2] - widgetRect[2]) / scale
+    }
+    return true, localMouse, widgetRect
+end
+
+---@protected
+function Textbox:_processMouseEvents(events, mouseScreen)
     if not self.carretCanvas then
         return
     end
 
     for _, ev in ipairs(events) do
         if ev.type == "MouseWheel" and ev.data and self.focused then
-            local mp = self.carretCanvas:mousePosition()
-            local sz = self.carretCanvas:size()
-            if mp[1] >= 0 and mp[1] <= sz[1] and mp[2] >= 0 and mp[2] <= sz[2] then
+            local hit = self:_getMouseHit(mouseScreen)
+            if hit then
                 self.scrollY = clamp(
                         self.scrollY - ev.data.mouseWheel * self.lineHeight * 3,
-                        0, self:_getMaxScroll())
+                        0, self:_getMaxScroll()
+                )
                 self:_invalidateCaret()
                 self.textDirty = true
             end
@@ -1053,11 +1090,12 @@ function Textbox:_processMouseEvents(events)
         elseif ev.type == "MouseButtonDown" and ev.data
                 and ev.data.mouseButton == "MouseLeft" then
             self._mouseLeftHeld = true
-            local mp = self.carretCanvas:mousePosition()
-            local sz = self.carretCanvas:size()
-            if mp[1] >= 0 and mp[1] <= sz[1] and mp[2] >= 0 and mp[2] <= sz[2] then
+
+            local hit, localMouse = self:_getMouseHit(mouseScreen)
+            if hit then
                 self:focus()
-                local pos = self:_xyToCursor(mp[1], mp[2])
+                local pos = self:_xyToCursor(localMouse[1], localMouse[2])
+
                 if self._shiftHeld then
                     if self.selAnchor == nil then
                         self.selAnchor = self.cursorPos
@@ -1065,6 +1103,7 @@ function Textbox:_processMouseEvents(events)
                 else
                     self.selAnchor = pos
                 end
+
                 self.cursorPos = pos
                 self:_resetBlink()
                 self._mouseWasDown = true
@@ -1081,11 +1120,9 @@ function Textbox:_processMouseEvents(events)
     end
 
     if self._mouseLeftHeld and self._mouseWasDown and self.focused then
-        local mp = self.carretCanvas:mousePosition()
-        local sz = self.carretCanvas:size()
-
-        if mp[1] >= 0 and mp[1] <= sz[1] and mp[2] >= 0 and mp[2] <= sz[2] then
-            local pos = self:_xyToCursor(mp[1], mp[2])
+        local hit, localMouse = self:_getMouseHit(mouseScreen)
+        if hit then
+            local pos = self:_xyToCursor(localMouse[1], localMouse[2])
             if pos ~= self.cursorPos then
                 self.cursorPos = pos
                 self:_resetBlink()
@@ -1569,9 +1606,11 @@ function Textbox.init()
 end
 
 function Textbox.update(dt)
+    local events = input.events() or {}
+    local mousePos = input.mousePosition()
     for _, tbx in pairs(activeTextboxes) do
         if tbx.setupDone then
-            tbx:_processInput(dt);
+            tbx:_processInput(dt, events, mousePos);
             tbx:_draw()
         end
     end

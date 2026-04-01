@@ -19,6 +19,7 @@ A lightweight and flexible textbox implementation for Starbound UI, built on top
 - Scrolling
 - Placeholder (hint) support
 - Customizable appearance via public API
+- Dynamic height functionality
 
 ---
 
@@ -36,6 +37,7 @@ local textbox = Textbox:setup("widgetName", {
     hintColor = {255, 255, 255},
     selectionColor = {255, 255, 255},
     caretColor = {255, 255, 255},
+    tabInsertText = "    ",
     onChanged = function(text)
         sb.logInfo("Text changed: %s", text)
     end,
@@ -44,6 +46,10 @@ local textbox = Textbox:setup("widgetName", {
     end,
     onEscapeKey = function()
         sb.logInfo("Escape key pressed")
+    end,
+    maxHeight = 120, -- Turns on the dynamic height functionality
+    onSizeChange = function(newSize)
+        sb.logInfo("Textbox changed size")
     end
 })
 ```
@@ -155,6 +161,12 @@ Set callback fired on Escape key.
 
 ---
 
+#### `nil` textbox:setOnSizeChange(`fun(newSize: number[])` fn)
+
+Set callback fired on changing the textbox size. Dynamic height functionality only.
+
+---
+
 #### `nil` Textbox.setDebug(`boolean` enabled)
 
 Enable or disable debug logging for the textbox module.
@@ -251,9 +263,15 @@ Get current placeholder (hint) text.
 
 ---
 
-#### `nil` textbox:setHintColor(`number[]` color)
+#### `nil` textbox:setMaxHeight(maxHeight)
 
-Set hint text color as `{r, g, b, a}`.
+Set max height of textbox. Enables the dynamic height functionality.
+
+---
+
+#### `number` textbox:getMaxHeight()
+
+Get current max height of the textbox.
 
 ---
 

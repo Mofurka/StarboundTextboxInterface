@@ -147,6 +147,7 @@ Textbox = {
     lines = {},
     scrollY = 0,
     caretTimer = 0,
+    tabSpaces = "  ",
     caretVisible = true,
     focused = false,
     caretColor = CARET_COLOR,
@@ -174,6 +175,7 @@ Textbox = {
     _ctrlHeld = false,
     _heldKey = nil,
     _heldTimer = 0,
+    _ignoreInputFrame = false,
 
     caretDirty = true
 }
@@ -189,9 +191,9 @@ end
 
 ---@class TextboxSetupOptions
 ---@field rect? RectI
----@field fontSize? number
----@field lineHeight? number
----@field hint? string
+---@field fontSize number?
+---@field lineHeight number?
+---@field hint string?
 ---@field textColor number[]? {r, g, b, a}
 ---@field hintColor number[]? {r, g, b, a}
 ---@field selectionColor number[]? {r, g, b, a}
@@ -199,6 +201,7 @@ end
 ---@field onChanged fun(newText: string)?
 ---@field onEnterKey fun()?
 ---@field onEscapeKey fun()?
+---@field tabInsertText string?
 ---@field maxHeight number?
 ---@field onSizeChange fun(newHeight: number[] {width, height})?
 
@@ -217,40 +220,28 @@ function Textbox:setup(widgetName, options)
     inst.onEscapeKey = options.onEscapeKey
     inst.maxHeight = options.maxHeight
     inst.onSizeChange = options.onSizeChange
+    inst.tabSpaces = options.tabInsertText or inst.tabSpaces
 
-    local isChild = widgetName:find("%.")
     local lytShort = "__tbx_lyt_" .. inst.uuid
 
     local rect = options.rect
     if not rect then
-        if isChild then
-            local sz = widget.getSize(widgetName)
-            rect = { 0, 0, sz[1], sz[2] }
-        else
-            rect = { 0, 0, 200, 200 }
-        end
+        local sz = widget.getSize(widgetName)
+        rect = { 0, 0, sz[1], sz[2] }
     end
 
     inst.minHeight = rect[4]
     inst.currentHeight = rect[4]
 
-    local lytPath = isChild and (widgetName .. "." .. lytShort) or lytShort
+    local lytPath = widgetName .. "." .. lytShort
     inst.path = lytPath
 
-    if isChild then
-        widget.removeChild(widgetName, lytPath)
-    else
-        pane.removeWidget(lytPath)
-    end
+    widget.removeChild(widgetName, lytPath)
 
     local lytConfig = { type = "layout", rect = rect, layoutType = "basic" }
-    if isChild then
-        widget.addChild(widgetName, lytConfig, lytShort)
-        debugMessage("Added textbox layout as child: %s -> %s", widgetName, lytShort)
-    else
-        pane.addWidget(lytConfig, lytShort)
-        debugMessage("Added textbox layout: %s", lytShort)
-    end
+
+    widget.addChild(widgetName, lytConfig, lytShort)
+    debugMessage("Added textbox layout as child: %s -> %s", widgetName, lytShort)
 
     local sz = widget.getSize(lytPath)
     local canvasRect = { 0, 0, sz[1] - 20, sz[2] - 1 }
@@ -960,6 +951,11 @@ function Textbox:_processInput(dt)
         self:_invalidateCaret()
     end
 
+    if self._ignoreInputFrame then
+        self._ignoreInputFrame = false
+        return
+    end
+
     local events = input.events() or {}
 
     for _, ev in ipairs(events) do
@@ -1351,6 +1347,7 @@ function Textbox:focus()
     self.focused = true
     widget.focus(self.fakeTextbox)
     widget.setText(self.fakeTextbox, "")
+    self._ignoreInputFrame = true
     self:_resetBlink()
     self:_invalidateAll()
 end
@@ -1399,6 +1396,12 @@ end
 ---@param fn fun()
 function Textbox:setOnEscapeKey(fn)
     self.onEscapeKey = fn
+end
+
+---@public
+---@param fn fun(newSize: number[])
+function Textbox:setOnSizeChange(fn)
+    self.onSizeChange = fn
 end
 
 ---@public
@@ -1531,6 +1534,18 @@ function Textbox:getHint()
     return self.hint
 end
 
+---@public
+---@param number
+function Textbox:setMaxHeight(maxHeight)
+    self.maxHeight = maxHeight
+    self:_updateAutoHeight()
+end
+
+---@public
+---@return number
+function Textbox:getMaxHeight()
+    return self.maxHeight
+end
 
 -- ─────────────────────────── lifecyle ────────────────────────────────
 

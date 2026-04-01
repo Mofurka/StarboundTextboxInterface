@@ -181,6 +181,7 @@ Textbox = {
     _heldKey = nil,
     _heldTimer = 0,
     _ignoreInputFrame = false,
+    _cursorAffinity = "forward",
 
     caretDirty = true
 }
@@ -579,7 +580,8 @@ function Textbox:_hitTestLine(line, x)
 end
 
 ---@protected
-function Textbox:_cursorToLineX(pos)
+function Textbox:_cursorToLineX(pos, affinity)
+    affinity = affinity or "forward"
     if #self.lines == 0 then
         return 1, 0
     end
@@ -590,6 +592,12 @@ function Textbox:_cursorToLineX(pos)
         local endPos = endsNL and (line.endIdx - 1) or line.endIdx
 
         if pos >= line.startIdx - 1 and pos <= endPos then
+            -- At a soft-wrap boundary, prefer next line if affinity is forward
+            if not endsNL and pos == endPos and li < #self.lines
+                    and affinity == "forward" then
+                return li + 1, 0
+            end
+
             local localIdx = pos - (line.startIdx - 1)
 
             if localIdx <= 0 then
@@ -614,13 +622,20 @@ function Textbox:_xyToCursor(clickX, clickY)
             math.floor((sz[2] - PAD + self.scrollY - clickY) / self.lineHeight) + 1,
             1, #self.lines)
     local line = self.lines[lineIdx]
-    return line and self:_hitTestLine(line, clickX - PAD) or 0
+    return line and self:_hitTestLine(line, clickX - PAD) or 0, lineIdx
 end
 
 ---@protected
-function Textbox:_xToLinePos(lineIdx, targetX)
+-- Так будет проще
+function Textbox:_determineClickAffinity(pos, lineIdx)
     local line = self.lines[lineIdx]
-    return line and self:_hitTestLine(line, targetX) or self.cursorPos
+    if line and pos == line.endIdx
+            and line.endIdx >= line.startIdx
+            and utf8_charAt(self.text, line.endIdx) ~= "\n"
+            and lineIdx < #self.lines then
+        return "backward"
+    end
+    return "forward"
 end
 
 -- ─────────────────────────── Selection ────────────────────────────────────────
@@ -769,6 +784,7 @@ end
 function Textbox:_onTextChanged()
     self.charLen = utf8_len(self.text)
     self.cursorPos = clamp(self.cursorPos, 0, self.charLen)
+    self._cursorAffinity = "forward"
 
     if self.selAnchor ~= nil then
         self.selAnchor = clamp(self.selAnchor, 0, self.charLen)
@@ -800,10 +816,11 @@ function Textbox:_ensureSelection(shift)
 end
 
 ---@protected
-function Textbox:_finishMove(shift)
+function Textbox:_finishMove(shift, affinity)
     if not shift then
         self.selAnchor = nil
     end
+    self._cursorAffinity = affinity or "forward"
     self:_resetBlink()
     self:_ensureCursorVisible()
     self:_invalidateCaret()
@@ -839,21 +856,21 @@ end
 ---@protected
 function Textbox:_moveCursorUp(shift)
     self:_ensureSelection(shift)
-    local li, x = self:_cursorToLineX(self.cursorPos)
+    local li, x = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
     self.cursorPos = li <= 1 and 0 or self:_xToLinePos(li - 1, x)
     self:_finishMove(shift)
 end
 ---@protected
 function Textbox:_moveCursorDown(shift)
     self:_ensureSelection(shift)
-    local li, x = self:_cursorToLineX(self.cursorPos)
+    local li, x = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
     self.cursorPos = li >= #self.lines and self.charLen or self:_xToLinePos(li + 1, x)
     self:_finishMove(shift)
 end
 ---@protected
 function Textbox:_moveCursorHome(shift)
     self:_ensureSelection(shift)
-    local li = self:_cursorToLineX(self.cursorPos)
+    local li = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
     local line = self.lines[li]
     if line then
         self.cursorPos = line.startIdx - 1
@@ -863,7 +880,7 @@ end
 ---@protected
 function Textbox:_moveCursorEnd(shift)
     self:_ensureSelection(shift)
-    local li = self:_cursorToLineX(self.cursorPos)
+    local li = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
     local line = self.lines[li]
     if line then
         local ep = line.endIdx
@@ -872,7 +889,7 @@ function Textbox:_moveCursorEnd(shift)
         end
         self.cursorPos = ep
     end
-    self:_finishMove(shift)
+    self:_finishMove(shift, "backward")
 end
 ---@protected
 function Textbox:_moveCursorWordLeft(shift)
@@ -938,7 +955,7 @@ end
 
 ---@protected
 function Textbox:_ensureCursorVisible()
-    local li = self:_cursorToLineX(self.cursorPos)
+    local li = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
     local viewH = self:_getViewHeight()
     local cursorTop = (li - 1) * self.lineHeight
     local cursorBot = cursorTop + self.lineHeight
@@ -1052,21 +1069,39 @@ function Textbox:_getWidgetScreenRect()
 end
 
 ---@protected
+function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
+    if not self.carretCanvas then
+        return nil
+    end
+
+    local widgetRect = self:_getWidgetScreenRect()
+    local scale = interface.scale()
+
+    local localMouse = {
+        (mouseScreen[1] - widgetRect[1]) / scale,
+        (mouseScreen[2] - widgetRect[2]) / scale
+    }
+
+    if clampToCanvas then
+        local sz = self.carretCanvas:size()
+        localMouse[1] = clamp(localMouse[1], 0, sz[1])
+        localMouse[2] = clamp(localMouse[2], 0, sz[2])
+    end
+
+    return localMouse, widgetRect
+end
+
+---@protected
 function Textbox:_getMouseHit(mouseScreen)
     if not self.carretCanvas then
         return false, nil, nil
     end
 
-    local widgetRect = self:_getWidgetScreenRect()
+    local localMouse, widgetRect = self:_screenToLocalMouse(mouseScreen, false)
     if not rect.contains(widgetRect, mouseScreen) then
-        return false, mouseScreen, widgetRect
+        return false, localMouse, widgetRect
     end
 
-    local scale = interface.scale()
-    local localMouse = {
-        (mouseScreen[1] - widgetRect[1]) / scale,
-        (mouseScreen[2] - widgetRect[2]) / scale
-    }
     return true, localMouse, widgetRect
 end
 
@@ -1095,7 +1130,8 @@ function Textbox:_processMouseEvents(events, mouseScreen)
             local hit, localMouse = self:_getMouseHit(mouseScreen)
             if hit then
                 self:focus()
-                local pos = self:_xyToCursor(localMouse[1], localMouse[2])
+                local pos, clickedLi = self:_xyToCursor(localMouse[1], localMouse[2])
+                self._cursorAffinity = self:_determineClickAffinity(pos, clickedLi)
 
                 if self._shiftHeld then
                     if self.selAnchor == nil then
@@ -1120,12 +1156,15 @@ function Textbox:_processMouseEvents(events, mouseScreen)
         end
     end
 
+    -- DRAG
+    -- Надо бы почаще комментарии оставлять
     if self._mouseLeftHeld and self._mouseWasDown and self.focused then
-        local hit, localMouse = self:_getMouseHit(mouseScreen)
-        if hit then
-            local pos = self:_xyToCursor(localMouse[1], localMouse[2])
+        local localMouse = self:_screenToLocalMouse(mouseScreen, true)
+        if localMouse then
+            local pos, dragLi = self:_xyToCursor(localMouse[1], localMouse[2])
             if pos ~= self.cursorPos then
                 self.cursorPos = pos
+                self._cursorAffinity = self:_determineClickAffinity(pos, dragLi)
                 self:_resetBlink()
                 self:_ensureCursorVisible()
             end
@@ -1281,8 +1320,8 @@ function Textbox:_drawCaret()
 
     local selFrom, selTo = self:_getSelRange()
     if selFrom then
-        local fromLi, fromX = self:_cursorToLineX(selFrom)
-        local toLi, toX = self:_cursorToLineX(selTo)
+        local fromLi, fromX = self:_cursorToLineX(selFrom, "forward")
+        local toLi, toX = self:_cursorToLineX(selTo, "backward")
         local drawFrom = math.max(firstVisible, fromLi)
         local drawTo = math.min(lastVisible, toLi)
 
@@ -1301,7 +1340,7 @@ function Textbox:_drawCaret()
     end
 
     if self.caretVisible then
-        local li, cx = self:_cursorToLineX(self.cursorPos)
+        local li, cx = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
         if li >= firstVisible and li <= lastVisible then
             local top = baseY - (li - 1) * lh
             local bot = top - lh
@@ -1386,6 +1425,7 @@ function Textbox:setText(text)
     self.charLen = utf8_len(self.text)
     self.cursorPos = self.charLen
     self.selAnchor = nil
+    self._cursorAffinity = "forward"
     self.scrollY = 0
     self:_invalidateAll()
     self:_reflow()
@@ -1492,6 +1532,7 @@ end
 function Textbox:setCursorPos(pos)
     self.cursorPos = clamp(pos, 0, self.charLen)
     self.selAnchor = nil
+    self._cursorAffinity = "forward"
     self:_ensureCursorVisible()
     self:_resetBlink()
     self:_invalidateCaret()

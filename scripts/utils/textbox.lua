@@ -52,6 +52,7 @@ end
 
 -- ─────────────────────────── modules ────────────────────────────
 
+---@type table<string, Textbox>
 local activeTextboxes = {}
 
 local function hasMod(mods, name)
@@ -152,6 +153,7 @@ Textbox = {
     focused = false,
     caretColor = CARET_COLOR,
     selectionColor = SELECTION_COLOR,
+    textOffsetY = 0,
     cache = {},
 
     -- callbacks
@@ -221,6 +223,8 @@ function Textbox:setup(widgetName, options)
     inst.maxHeight = options.maxHeight
     inst.onSizeChange = options.onSizeChange
     inst.tabSpaces = options.tabInsertText or inst.tabSpaces
+    inst.verticalAlign = options.verticalAlign or "bottom"
+    inst.textOffsetY = options.textOffsetY or 0
 
     local lytShort = "__tbx_lyt_" .. inst.uuid
 
@@ -230,8 +234,10 @@ function Textbox:setup(widgetName, options)
         rect = { 0, 0, sz[1], sz[2] }
     end
 
-    inst.minHeight = rect[4]
-    inst.currentHeight = rect[4]
+    local intrinsicMinHeight = self:_requiredHeightForLines(1)
+    inst.minHeight = math.max(rect[4], intrinsicMinHeight)
+    inst.currentHeight = inst.minHeight
+    rect = { rect[1], rect[2], rect[3], inst.minHeight }
 
     local lytPath = widgetName .. "." .. lytShort
     inst.path = lytPath
@@ -239,13 +245,10 @@ function Textbox:setup(widgetName, options)
     widget.removeChild(widgetName, lytPath)
 
     local lytConfig = { type = "layout", rect = rect, layoutType = "basic" }
-
     widget.addChild(widgetName, lytConfig, lytShort)
-    debugMessage("Added textbox layout as child: %s -> %s", widgetName, lytShort)
 
-    local sz = widget.getSize(lytPath)
-    local canvasRect = { 0, 0, sz[1] - 20, sz[2] - 1 }
-    inst.rect = { 0, 0, sz[1], sz[2] }
+    local canvasRect = { 0, 0, rect[3], rect[4] - 1 }
+    inst.rect = { 0, 0, rect[3], rect[4] }
     inst.wrapWidth = canvasRect[3] - PAD * 2
 
     local scrollConfig = root.assetJson("/scripts/utils/tbx_scroll_config.json")
@@ -300,6 +303,14 @@ function Textbox:_setupMeasureLabel()
         value = "",
     }, path)
     self.measureLabelPath = path
+end
+
+---@protected
+function Textbox:_getTextBaseY()
+    local canvasH = self.carretCanvas:size()[2]
+    local contentH = #self.lines * self.lineHeight
+    local fitBaseY = math.min(canvasH - PAD, contentH)
+    return fitBaseY + self.scrollY + (self.textOffsetY or 0)
 end
 
 ---@protected
@@ -872,14 +883,15 @@ function Textbox:_moveCursorWordRight(shift)
     self:_finishMove(shift)
 end
 
--- ─────────────────────────── scoll ──────────────────────────────────────────
+-- ─────────────────────────── srcoll ──────────────────────────────────────────
 ---@protected
 function Textbox:_getContentHeight()
     return #self.lines * self.lineHeight
 end
 ---@protected
 function Textbox:_getViewHeight()
-    return self.carretCanvas:size()[2]
+    local h = self.carretCanvas:size()[2]
+    return math.max(1, h)
 end
 ---@protected
 function Textbox:_getMaxScroll()
@@ -925,13 +937,14 @@ function Textbox:_ensureCursorVisible()
     local viewH = self:_getViewHeight()
     local cursorTop = (li - 1) * self.lineHeight
     local cursorBot = cursorTop + self.lineHeight
-    local visBot = self.scrollY + viewH - PAD * 2
+    local innerViewH = math.max(1, viewH - PAD * 2)
+    local visBot = self.scrollY + innerViewH
 
     local old = self.scrollY
     if cursorTop < self.scrollY then
         self.scrollY = cursorTop
     elseif cursorBot > visBot then
-        self.scrollY = cursorBot - (viewH - PAD * 2)
+        self.scrollY = cursorBot - innerViewH
     end
     self.scrollY = clamp(self.scrollY, 0, self:_getMaxScroll())
     if self.scrollY ~= old then
@@ -1178,8 +1191,7 @@ function Textbox:_drawText()
     end
     canvas:clear()
 
-    local canvasH = canvas:size()[2]
-    local baseY = canvasH - PAD + self.scrollY
+    local baseY = self:_getTextBaseY()
     local lh = self.lineHeight
     local fs, color = self.fontSize, self.textColor
 
@@ -1225,8 +1237,7 @@ function Textbox:_drawCaret()
         return
     end
 
-    local canvasH = canvas:size()[2]
-    local baseY = canvasH - PAD + self.scrollY
+    local baseY = self:_getTextBaseY()
     local lh = self.lineHeight
     local firstVisible, lastVisible = self:_getVisibleLineRange()
 
@@ -1264,13 +1275,17 @@ function Textbox:_drawCaret()
     self.caretDirty = false
 end
 
---@protected
+function Textbox:_requiredHeightForLines(lineCount)
+    return lineCount * self.lineHeight + PAD * 2 + 1
+end
+
+---@protected
 function Textbox:_updateAutoHeight()
     if not self.maxHeight then
         return
     end
 
-    local contentHeight = self:_getContentHeight() + PAD * 2
+    local contentHeight = self:_requiredHeightForLines(#self.lines)
     local newHeight = clamp(contentHeight, self.minHeight, self.maxHeight)
 
     if newHeight ~= self.currentHeight then
@@ -1285,7 +1300,7 @@ function Textbox:_updateAutoHeight()
         widget.setSize(self.path, { width, height })
 
         -- canvases
-        local canvasSize = { width - 20, height - 1 }
+        local canvasSize = { width, height - 1 }
         widget.setSize(self.path .. ".__tbx_text_canvas", canvasSize)
         widget.setSize(self.path .. ".__tbx_carret_", canvasSize)
 

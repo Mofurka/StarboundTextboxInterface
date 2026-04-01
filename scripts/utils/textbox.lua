@@ -239,8 +239,7 @@ function Textbox:setup(widgetName, options)
         rect = { 0, 0, sz[1], sz[2] }
     end
 
-    local intrinsicMinHeight = self:_requiredHeightForLines(1)
-    inst.minHeight = math.max(rect[4], intrinsicMinHeight)
+    inst.minHeight = rect[4]
     inst.currentHeight = inst.minHeight
     rect = { rect[1], rect[2], rect[3], inst.minHeight }
 
@@ -955,20 +954,29 @@ end
 
 ---@protected
 function Textbox:_ensureCursorVisible()
-    local li = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
+    local li = self:_cursorToLineX(self.cursorPos)
     local viewH = self:_getViewHeight()
+
     local cursorTop = (li - 1) * self.lineHeight
     local cursorBot = cursorTop + self.lineHeight
+
     local innerViewH = math.max(1, viewH - PAD * 2)
-    local visBot = self.scrollY + innerViewH
+
+    local margin = math.floor(self.lineHeight * 0.5)
+
+    local topLimit = self.scrollY + margin
+    local bottomLimit = self.scrollY + innerViewH - margin
 
     local old = self.scrollY
-    if cursorTop < self.scrollY then
-        self.scrollY = cursorTop
-    elseif cursorBot > visBot then
-        self.scrollY = cursorBot - innerViewH
+
+    if cursorTop < topLimit then
+        self.scrollY = cursorTop - margin
+    elseif cursorBot > bottomLimit then
+        self.scrollY = cursorBot - innerViewH + margin
     end
+
     self.scrollY = clamp(self.scrollY, 0, self:_getMaxScroll())
+
     if self.scrollY ~= old then
         self:_invalidateAll()
     else
@@ -1353,7 +1361,7 @@ function Textbox:_drawCaret()
 end
 
 function Textbox:_requiredHeightForLines(lineCount)
-    return lineCount * self.lineHeight + PAD * 2 + 1
+    return lineCount == 1 and self.minHeight or (lineCount * self.lineHeight + PAD * 2)
 end
 
 ---@protected

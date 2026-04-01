@@ -263,7 +263,7 @@ Get current placeholder (hint) text.
 
 ---
 
-#### `nil` textbox:setMaxHeight(maxHeight)
+#### `nil` textbox:setMaxHeight(`number` maxHeight)
 
 Set max height of textbox. Enables the dynamic height functionality.
 
@@ -272,6 +272,12 @@ Set max height of textbox. Enables the dynamic height functionality.
 #### `number` textbox:getMaxHeight()
 
 Get current max height of the textbox.
+
+---
+
+#### `nil` textbox:setIgnoreInputFrame(`boolean` ignore)
+
+If `ignore` is true, all the input will be ignored for the current frame.
 
 ---
 

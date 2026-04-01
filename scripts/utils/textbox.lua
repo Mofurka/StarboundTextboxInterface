@@ -887,7 +887,8 @@ function Textbox:_moveCursorWordRight(shift)
     self:_finishMove(shift)
 end
 
--- ─────────────────────────── srcoll ──────────────────────────────────────────
+-- ─────────────────────────── scroll ──────────────────────────────────────────
+
 ---@protected
 function Textbox:_getContentHeight()
     return #self.lines * self.lineHeight
@@ -1550,6 +1551,12 @@ end
 function Textbox:setHintColor(color)
     self.hintColor = color
     self:_invalidateCaret()
+end
+
+---@public
+---@param ignore boolean
+function Textbox:setIgnoreInputFrame(ignore)
+    self._ignoreInputFrame = ignore
 end
 
 ---@public

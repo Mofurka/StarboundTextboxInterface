@@ -182,6 +182,7 @@ Textbox = {
     _heldTimer = 0,
     _ignoreInputFrame = false,
     _cursorAffinity = "forward",
+    _lineHeightExplicit = nil,
 
     caretDirty = true
 }
@@ -218,6 +219,7 @@ function Textbox:setup(widgetName, options)
     options = options or {}
     local inst = Textbox.new()
     inst.setupDone = true
+    inst._lineHeightExplicit = options.lineHeight ~= nil
     inst.fontSize = options.fontSize or DEFAULT_FONT_SIZE
     inst.lineHeight = options.lineHeight or DEFAULT_LINE_HEIGHT
     inst.lineHeightRatio = inst.lineHeight / inst.fontSize
@@ -282,6 +284,12 @@ function Textbox:setup(widgetName, options)
     inst.carretCanvas = widget.bindCanvas(lytPath .. "." .. carretName)
     inst:_setupMeasureLabel()
 
+    if not inst._lineHeightExplicit then
+        local metrics = inst:_measureFontMetrics()
+        inst.lineHeight = inst:_resolveAutoLineHeight(metrics)
+    else
+        inst.lineHeight = math.floor(inst.lineHeight + 0.5)
+    end
     inst:_reflow()
     inst:_invalidateAll()
 
@@ -293,6 +301,53 @@ function Textbox:setup(widgetName, options)
 end
 
 -- ─────────────────────────── MISERY (measure) ─────────────────────────────────
+---@protected
+function Textbox:_resolveAutoLineHeight(metrics)
+    local size = self.fontSize
+    local textH = metrics.textHeight
+
+    local extraGap = math.max(2, math.floor(size * 0.2 + 0.5))
+    return math.max(
+            textH + extraGap,
+            math.floor(size * 1.35 + 0.5)
+    )
+end
+---@protected
+function Textbox:_measureFontMetrics()
+    if not self.cache[self.fontSize] then
+        self.cache[self.fontSize] = {}
+    end
+
+    local cached = self.cache[self.fontSize].__fontMetrics
+    if cached then
+        return cached
+    end
+
+    widget.setText(self.measureLabelPath, "Ag")
+    local sz = widget.getSize(self.measureLabelPath)
+
+    local textW = sz and sz[1] or self.fontSize
+    local textH = sz and sz[2] or self.fontSize
+
+    textH = math.max(1, math.floor(textH + 0.5))
+
+    local lineH = math.max(textH, math.floor((self.lineHeight or textH) + 0.5))
+
+    local free = math.max(0, lineH - textH)
+    local topInset = math.floor(free / 2)
+    local bottomInset = free - topInset
+
+    local metrics = {
+        textWidth = textW,
+        textHeight = textH,
+        lineHeight = lineH,
+        topInset = topInset,
+        bottomInset = bottomInset
+    }
+
+    self.cache[self.fontSize].__fontMetrics = metrics
+    return metrics
+end
 
 ---@protected
 function Textbox:_setupMeasureLabel()
@@ -310,12 +365,9 @@ function Textbox:_setupMeasureLabel()
     self.measureLabelPath = path
 end
 
----@protected
 function Textbox:_getTextBaseY()
     local canvasH = self.carretCanvas:size()[2]
-    local contentH = #self.lines * self.lineHeight
-    local fitBaseY = math.min(canvasH - PAD, contentH)
-    return fitBaseY + self.scrollY + (self.textOffsetY or 0)
+    return (canvasH - PAD) + self.scrollY + (self.textOffsetY or 0)
 end
 
 ---@protected
@@ -1268,9 +1320,11 @@ function Textbox:_drawText()
     end
     canvas:clear()
 
+    local metrics = self:_measureFontMetrics()
     local baseY = self:_getTextBaseY()
     local lh = self.lineHeight
     local fs, color = self.fontSize, self.textColor
+    local vInset = metrics.topInset or math.max(0, math.floor((lh - metrics.textHeight) / 2))
 
     local drawParams = {
         position = { PAD, 0 },
@@ -1279,7 +1333,7 @@ function Textbox:_drawText()
     }
 
     if self.charLen == 0 and self.hint and self.hint ~= "" then
-        drawParams.position[2] = baseY
+        drawParams.position[2] = baseY - vInset
         canvas:drawText(self.hint, drawParams, fs, self.hintColor)
     else
         local fromLi, toLi = self:_getVisibleLineRange()
@@ -1292,7 +1346,7 @@ function Textbox:_drawText()
                     if lineText:sub(-1) == "\n" then
                         lineText = lineText:sub(1, -2)
                     end
-                    drawParams.position[2] = top
+                    drawParams.position[2] = top - vInset
                     canvas:drawText(lineText, drawParams, fs, color)
                 end
             end
@@ -1302,6 +1356,7 @@ function Textbox:_drawText()
     self.textDirty = false
 end
 
+---@protected
 ---@protected
 function Textbox:_drawCaret()
     local canvas = self.carretCanvas
@@ -1314,8 +1369,12 @@ function Textbox:_drawCaret()
         return
     end
 
+    local metrics = self:_measureFontMetrics()
     local baseY = self:_getTextBaseY()
     local lh = self.lineHeight
+    local textH = metrics.textHeight
+    local vInset = math.max(0, math.floor((lh - textH) / 2))
+
     local firstVisible, lastVisible = self:_getVisibleLineRange()
 
     local selFrom, selTo = self:_getSelRange()
@@ -1329,11 +1388,14 @@ function Textbox:_drawCaret()
             local line = self.lines[li]
             if line then
                 local top = baseY - (li - 1) * lh
-                local bot = top - lh
+                local textTop = top - metrics.topInset
+                local textBot = textTop - textH
+
                 local x1 = li == fromLi and (PAD + fromX) or PAD
                 local x2 = li == toLi and (PAD + toX) or (PAD + line.width)
+
                 if x2 > x1 then
-                    canvas:drawRect({ x1, bot + 2, x2, top + 2 }, self.selectionColor)
+                    canvas:drawRect({ x1, textBot, x2, textTop }, self.selectionColor)
                 end
             end
         end
@@ -1343,9 +1405,11 @@ function Textbox:_drawCaret()
         local li, cx = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
         if li >= firstVisible and li <= lastVisible then
             local top = baseY - (li - 1) * lh
-            local bot = top - lh
+            local textTop = top - metrics.topInset
+            local textBot = textTop - textH
             local x = PAD + cx
-            canvas:drawLine({ x, bot + 5 }, { x, top }, self.caretColor, 1)
+
+            canvas:drawLine({ x, textBot }, { x, textTop }, self.caretColor, 1)
         end
     end
 
@@ -1353,7 +1417,8 @@ function Textbox:_drawCaret()
 end
 
 function Textbox:_requiredHeightForLines(lineCount)
-    return lineCount * self.lineHeight + PAD * 2 + 1
+    local lh = math.floor(self.lineHeight + 0.5)
+    return lineCount * lh + PAD * 2 + 1
 end
 
 ---@protected
@@ -1606,12 +1671,22 @@ function Textbox:setFontSize(size)
     if self.fontSize == size then
         return
     end
+
     self.fontSize = size
-    self.lineHeight = size * self.lineHeightRatio
     self:_destroyMeasureLabel()
     self:_setupMeasureLabel()
+
+    local metrics = self:_measureFontMetrics()
+
+    if not self._lineHeightExplicit then
+        self.lineHeight = self:_resolveAutoLineHeight(metrics)
+    else
+        self.lineHeight = math.floor(self.lineHeight + 0.5)
+    end
+
     self:_invalidateAll()
     self:_reflow()
+    self:_updateAutoHeight()
     self:_ensureCursorVisible()
 end
 

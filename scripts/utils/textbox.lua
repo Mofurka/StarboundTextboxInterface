@@ -76,7 +76,7 @@ end
 -- ─────────────────────────── constants ───────────────────────────────────────
 
 local DEBUG = false
-local PAD = 3
+local PAD = 2
 local CARET_BLINK_INTERVAL = 0.5
 local CARET_COLOR = { 0, 0, 0, 255 }
 local SELECTION_COLOR = { 50, 100, 200, 80 }
@@ -232,6 +232,8 @@ function Textbox:setup(widgetName, options)
     inst.verticalAlign = options.verticalAlign or "bottom"
     inst.textOffsetY = options.textOffsetY or 0
     inst.parrentWidgetPath = widgetName
+    inst.caretColor = options.caretColor or CARET_COLOR
+    inst._screenOffset = options.screenOffset or {0, 0}
 
     local lytShort = "__tbx_lyt_" .. inst.uuid
 
@@ -240,11 +242,7 @@ function Textbox:setup(widgetName, options)
         local sz = widget.getSize(widgetName)
         rect = { 0, 0, sz[1], sz[2] }
     end
-
-    local intrinsicMinHeight = self:_requiredHeightForLines(1)
-    inst.minHeight = math.max(rect[4], intrinsicMinHeight)
-    inst.currentHeight = inst.minHeight
-    rect = { rect[1], rect[2], rect[3], inst.minHeight }
+    inst._layoutOffset = { rect[1], rect[2] }
 
     local lytPath = widgetName .. "." .. lytShort
     inst.path = lytPath
@@ -276,7 +274,7 @@ function Textbox:setup(widgetName, options)
     widget.addChild(lytPath, {
         type = "textbox", position = { -1000, -1000 }, maxWidth = 200,
         textAlign = "left", callback = "null", enterKey = "null",
-        escapeKey = "null", regex = "[\\s\\S]*" -- thanks Deg for regex
+        escapeKey = "null", regex = "[\\s\\S]*"
     }, "__tbx_fake_textbox")
     inst.fakeTextbox = lytPath .. ".__tbx_fake_textbox"
 
@@ -290,14 +288,32 @@ function Textbox:setup(widgetName, options)
     else
         inst.lineHeight = math.floor(inst.lineHeight + 0.5)
     end
+
+    local intrinsicMinHeight = inst.lineHeight + PAD * 2
+    inst.minHeight = intrinsicMinHeight
+    inst.currentHeight = inst.minHeight
+    rect = { rect[1], rect[2], rect[3], inst.minHeight }
+
+    local width = rect[3] - rect[1]
+    local height = rect[4] - rect[2]
+    local canvasSize = { width, height}
+
+    widget.setSize(inst.path, { width, height })
+    widget.setSize(inst.path .. ".__tbx_text_canvas", canvasSize)
+    widget.setSize(inst.path .. ".__tbx_carret_", canvasSize)
+    widget.setSize(inst.path .. ".__tbx_sa_", { width + 20, height })
+
+    inst.rect = { 0, 0, width, height }
+    inst.wrapWidth = width - PAD * 2
+
     inst:_reflow()
+    inst.scrollY = 0
     inst:_invalidateAll()
 
     debugMessage("Textbox setup complete: %s", sb.print(inst))
     activeTextboxes[inst.uuid] = inst
     debugMessage("Textbox setup complete: %s", inst.uuid)
     return inst
-
 end
 
 -- ─────────────────────────── MISERY (measure) ─────────────────────────────────
@@ -306,11 +322,15 @@ function Textbox:_resolveAutoLineHeight(metrics)
     local size = self.fontSize
     local textH = metrics.textHeight
 
-    local extraGap = math.max(2, math.floor(size * 0.2 + 0.5))
+    local extraGap = math.max(1, math.floor(size * 0.12 + 0.5))
     return math.max(
             textH + extraGap,
-            math.floor(size * 1.35 + 0.5)
+            math.floor(size * 1.15 + 0.5)
     )
+end
+---@protected
+function Textbox:_getVerticalInset(metrics)
+    return math.max(0, math.floor((self.lineHeight - metrics.textHeight) / 2))
 end
 ---@protected
 function Textbox:_measureFontMetrics()
@@ -328,21 +348,11 @@ function Textbox:_measureFontMetrics()
 
     local textW = sz and sz[1] or self.fontSize
     local textH = sz and sz[2] or self.fontSize
-
     textH = math.max(1, math.floor(textH + 0.5))
-
-    local lineH = math.max(textH, math.floor((self.lineHeight or textH) + 0.5))
-
-    local free = math.max(0, lineH - textH)
-    local topInset = math.floor(free / 2)
-    local bottomInset = free - topInset
 
     local metrics = {
         textWidth = textW,
-        textHeight = textH,
-        lineHeight = lineH,
-        topInset = topInset,
-        bottomInset = bottomInset
+        textHeight = textH
     }
 
     self.cache[self.fontSize].__fontMetrics = metrics
@@ -367,7 +377,8 @@ end
 
 function Textbox:_getTextBaseY()
     local canvasH = self.carretCanvas:size()[2]
-    return (canvasH - PAD) + self.scrollY + (self.textOffsetY or 0)
+    local effectiveH = (#self.lines <= 1) and self.minHeight or canvasH
+    return (effectiveH - PAD) + self.scrollY + (self.textOffsetY or 0)
 end
 
 ---@protected
@@ -1007,27 +1018,46 @@ end
 
 ---@protected
 function Textbox:_ensureCursorVisible()
-    local li = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
+    --local contentH = self:_getContentHeight()
     local viewH = self:_getViewHeight()
+
+--[[    if contentH + PAD * 2 <= viewH then
+        if self.scrollY ~= 0 then
+            self.scrollY = 0
+            self:_invalidateAll()
+        else
+            self:_invalidateCaret()
+        end
+        return
+    end]]
+    local li = self:_cursorToLineX(self.cursorPos)
+
     local cursorTop = (li - 1) * self.lineHeight
     local cursorBot = cursorTop + self.lineHeight
+
     local innerViewH = math.max(1, viewH - PAD * 2)
-    local visBot = self.scrollY + innerViewH
+
+    local margin = math.floor(self.lineHeight * 0.5)
+
+    local topLimit = self.scrollY + margin
+    local bottomLimit = self.scrollY + innerViewH - margin
 
     local old = self.scrollY
-    if cursorTop < self.scrollY then
-        self.scrollY = cursorTop
-    elseif cursorBot > visBot then
-        self.scrollY = cursorBot - innerViewH
+
+    if cursorTop < topLimit then
+        self.scrollY = cursorTop - margin
+    elseif cursorBot > bottomLimit then
+        self.scrollY = cursorBot - innerViewH + margin
     end
+
     self.scrollY = clamp(self.scrollY, 0, self:_getMaxScroll())
+
     if self.scrollY ~= old then
         self:_invalidateAll()
     else
         self:_invalidateCaret()
     end
 end
-
 -- ─────────────────────────── prosessing ────────────────────────────────
 ---@protected
 function Textbox:_processInput(dt, events, mousePos)
@@ -1107,9 +1137,16 @@ end
 
 ---@protected
 function Textbox:_getWidgetScreenRect()
-    local localPos = vec2.add(pane.getPosition(), widget.getPosition(self.parrentWidgetPath))
+    local panePos = pane.getPosition()
+    local parentWidgetPos = widget.getPosition(self.parrentWidgetPath)
+    local parentPos = vec2.add(panePos, parentWidgetPos)
+    local localPos = vec2.add(parentPos, self._layoutOffset)
+
+    local extraOffset = self._screenOffset or {0, 0}
+    local finalPos = vec2.add(localPos, extraOffset)
+
     local scale = interface.scale()
-    local screenPos = vec2.mul(localPos, scale)
+    local screenPos = vec2.mul(finalPos, scale)
     local size = vec2.mul(self.carretCanvas:size(), scale)
 
     return {
@@ -1133,6 +1170,10 @@ function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
         (mouseScreen[1] - widgetRect[1]) / scale,
         (mouseScreen[2] - widgetRect[2]) / scale
     }
+
+    debugMessage("MOUSE SCREEN: %s", sb.printJson(mouseScreen))
+    debugMessage("WIDGET RECT: %s", sb.printJson(widgetRect))
+    debugMessage("LOCAL MOUSE: %s", sb.printJson(localMouse))
 
     if clampToCanvas then
         local sz = self.carretCanvas:size()
@@ -1214,6 +1255,8 @@ function Textbox:_processMouseEvents(events, mouseScreen)
         local localMouse = self:_screenToLocalMouse(mouseScreen, true)
         if localMouse then
             local pos, dragLi = self:_xyToCursor(localMouse[1], localMouse[2])
+            debugMessage("Mouse drag at: %s", sb.printJson(localMouse))
+            debugMessage("Drag hit line: %s", sb.print(dragLi))
             if pos ~= self.cursorPos then
                 self.cursorPos = pos
                 self._cursorAffinity = self:_determineClickAffinity(pos, dragLi)
@@ -1324,7 +1367,7 @@ function Textbox:_drawText()
     local baseY = self:_getTextBaseY()
     local lh = self.lineHeight
     local fs, color = self.fontSize, self.textColor
-    local vInset = metrics.topInset or math.max(0, math.floor((lh - metrics.textHeight) / 2))
+    local vInset = self:_getVerticalInset(metrics)
 
     local drawParams = {
         position = { PAD, 0 },
@@ -1335,6 +1378,8 @@ function Textbox:_drawText()
     if self.charLen == 0 and self.hint and self.hint ~= "" then
         drawParams.position[2] = baseY - vInset
         canvas:drawText(self.hint, drawParams, fs, self.hintColor)
+        debugMessage("Drawing line: %s", lineText)
+        debugMessage("Line pos: %s", sb.printJson(drawParams.position))
     else
         local fromLi, toLi = self:_getVisibleLineRange()
         for li = fromLi, toLi do
@@ -1347,7 +1392,9 @@ function Textbox:_drawText()
                         lineText = lineText:sub(1, -2)
                     end
                     drawParams.position[2] = top - vInset
+                    debugMessage("DRAW LINE %s Y: %s", sb.print(li), sb.print(top - vInset))
                     canvas:drawText(lineText, drawParams, fs, color)
+
                 end
             end
         end
@@ -1373,7 +1420,7 @@ function Textbox:_drawCaret()
     local baseY = self:_getTextBaseY()
     local lh = self.lineHeight
     local textH = metrics.textHeight
-    local vInset = math.max(0, math.floor((lh - textH) / 2))
+    local vInset = self:_getVerticalInset(metrics)
 
     local firstVisible, lastVisible = self:_getVisibleLineRange()
 
@@ -1388,7 +1435,7 @@ function Textbox:_drawCaret()
             local line = self.lines[li]
             if line then
                 local top = baseY - (li - 1) * lh
-                local textTop = top - metrics.topInset
+                local textTop = top - vInset
                 local textBot = textTop - textH
 
                 local x1 = li == fromLi and (PAD + fromX) or PAD
@@ -1405,7 +1452,7 @@ function Textbox:_drawCaret()
         local li, cx = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
         if li >= firstVisible and li <= lastVisible then
             local top = baseY - (li - 1) * lh
-            local textTop = top - metrics.topInset
+            local textTop = top - vInset
             local textBot = textTop - textH
             local x = PAD + cx
 
@@ -1417,8 +1464,7 @@ function Textbox:_drawCaret()
 end
 
 function Textbox:_requiredHeightForLines(lineCount)
-    local lh = math.floor(self.lineHeight + 0.5)
-    return lineCount * lh + PAD * 2 + 1
+    return lineCount == 1 and self.minHeight or (lineCount * self.lineHeight + PAD * 2)
 end
 
 ---@protected
@@ -1435,14 +1481,14 @@ function Textbox:_updateAutoHeight()
 
         local newRect = { self.rect[1], self.rect[2], self.rect[3], newHeight }
 
-        local width = newRect[3] - newRect[1]
-        local height = newRect[4] - newRect[2]
+        local width = newRect[3]
+        local height = newRect[4]
 
         -- layout
         widget.setSize(self.path, { width, height })
 
         -- canvases
-        local canvasSize = { width, height - 1 }
+        local canvasSize = { width, height }
         widget.setSize(self.path .. ".__tbx_text_canvas", canvasSize)
         widget.setSize(self.path .. ".__tbx_carret_", canvasSize)
 
@@ -1745,4 +1791,3 @@ function Textbox.uninit()
     end
     activeTextboxes = {}
 end
-

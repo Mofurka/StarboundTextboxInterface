@@ -247,14 +247,11 @@ function Textbox:setup(widgetName, options)
     local lytPath = widgetName .. "." .. lytShort
     inst.path = lytPath
 
-    widget.removeChild(widgetName, lytPath)
-
     local lytConfig = { type = "layout", rect = rect, layoutType = "basic" }
     widget.addChild(widgetName, lytConfig, lytShort)
 
     local canvasRect = { 0, 0, rect[3], rect[4] - 1 }
     inst.rect = { 0, 0, rect[3], rect[4] }
-    inst.wrapWidth = canvasRect[3] - PAD * 2
 
     local scrollConfig = root.assetJson("/scripts/utils/tbx_scroll_config.json")
     scrollConfig.rect = { rect[1], rect[2], rect[3] + 20, rect[4] }
@@ -289,14 +286,13 @@ function Textbox:setup(widgetName, options)
         inst.lineHeight = math.floor(inst.lineHeight + 0.5)
     end
 
-    local intrinsicMinHeight = inst.lineHeight + PAD * 2
-    inst.minHeight = intrinsicMinHeight
-    inst.currentHeight = inst.minHeight
-    rect = { rect[1], rect[2], rect[3], inst.minHeight }
 
     local width = rect[3] - rect[1]
     local height = rect[4] - rect[2]
-    local canvasSize = { width, height}
+    local canvasSize = { width, height }
+
+    inst.currentHeight = height
+    inst.minHeight = height
 
     widget.setSize(inst.path, { width, height })
     widget.setSize(inst.path .. ".__tbx_text_canvas", canvasSize)
@@ -686,6 +682,12 @@ function Textbox:_xyToCursor(clickX, clickY)
             1, #self.lines)
     local line = self.lines[lineIdx]
     return line and self:_hitTestLine(line, clickX - PAD) or 0, lineIdx
+end
+
+---@protected
+function Textbox:_xToLinePos(lineIdx, targetX)
+    local line = self.lines[lineIdx]
+    return line and self:_hitTestLine(line, targetX) or self.cursorPos
 end
 
 ---@protected
@@ -1329,9 +1331,21 @@ function Textbox:_processKeys(events)
             elseif key == "Down" then
                 self:_moveCursorDown(shift)
             elseif key == "Home" then
-                self:_moveCursorHome(shift)
+                if ctrl then
+                    self:_ensureSelection(shift)
+                    self.cursorPos = 0
+                    self:_finishMove(shift)
+                else
+                    self:_moveCursorHome(shift)
+                end
             elseif key == "End" then
-                self:_moveCursorEnd(shift)
+                if ctrl then
+                    self:_ensureSelection(shift)
+                    self.cursorPos = self.charLen
+                    self:_finishMove(shift)
+                else
+                    self:_moveCursorEnd(shift)
+                end
             elseif ctrl and key == "A" then
                 self.selAnchor = 0;
                 self.cursorPos = self.charLen;
@@ -1473,6 +1487,7 @@ function Textbox:_updateAutoHeight()
         return
     end
 
+    sb.setLogMap("LINECOUNT", self.minHeight)
     local contentHeight = self:_requiredHeightForLines(#self.lines)
     local newHeight = clamp(contentHeight, self.minHeight, self.maxHeight)
 

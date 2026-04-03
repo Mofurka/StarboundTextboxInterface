@@ -75,13 +75,29 @@ end
 
 -- ─────────────────────────── constants ───────────────────────────────────────
 
+local WIDGET_SHORTS = {
+    textCanvas = "_",
+    carretCanvas = "__",
+    fakeTextbox = "___",
+    scrollArea = "____",
+    lyt = "_", -- this comes with uuid, so it won't conflict between instances
+    measureLabel = "_", -- this comes with uuid, so it won't conflict between instances
+}
+
+local CURSOR_AFFINITY = {
+    forward = 1,
+    backward = 0
+}
+
+local function dotWidget(name)
+    return "." .. name
+end
+
 local DEBUG = false
 local PAD = 2
 local CARET_BLINK_INTERVAL = 0.5
 local CARET_COLOR = { 0, 0, 0, 255 }
 local SELECTION_COLOR = { 50, 100, 200, 80 }
-local DEFAULT_FONT_SIZE = 8
-local DEFAULT_LINE_HEIGHT = 12
 local KEY_REPEAT_DELAY = 0.5
 local KEY_REPEAT_INTERVAL = 0.05
 
@@ -93,6 +109,30 @@ local REPEATABLE_KEYS = {
     Up = true,
     Down = true
 }
+
+local KEYS = {
+    Backspace = "Backspace",
+    Escape = "Esc",
+    Delete = "Del",
+    Return = "Return",
+    Left = "Left",
+    Right = "Right",
+    Up = "Up",
+    Down = "Down",
+    Home = "Home",
+    End = "End",
+    Enter = "Enter",
+    Tab = "Tab",
+    LCtrl = "LCtrl",
+    RCtrl = "RCtrl",
+    LShift = "LShift",
+    RShift = "RShift",
+    A = "A",
+    C = "C",
+    V = "V",
+    X = "X",
+}
+
 
 local function debugMessage(msg, ...)
     if DEBUG then
@@ -133,16 +173,20 @@ Textbox = {
     parrentWidgetPath = nil,
     path = nil,
     textCanvas = nil,
+    textCanvasPath = nil,
     carretCanvas = nil,
+    carretCanvasPath = nil,
     fakeTextbox = nil,
+    fakeTextboxPath = nil,
+    scrollAreaPath = nil,
     measureLabelPath = nil,
     textColor = { 255, 255, 255, 255 },
     setupDone = false,
     uuid = nil,
     textDirty = true,
-    fontSize = DEFAULT_FONT_SIZE,
-    lineHeight = DEFAULT_LINE_HEIGHT,
-    lineHeightRatio = DEFAULT_LINE_HEIGHT / DEFAULT_FONT_SIZE,
+    fontSize = 8,
+    lineHeight = 12,
+    lineHeightRatio = 0,
     wrapWidth = 180,
     text = "",
     charLen = 0,
@@ -181,8 +225,9 @@ Textbox = {
     _heldKey = nil,
     _heldTimer = 0,
     _ignoreInputFrame = false,
-    _cursorAffinity = "forward",
+    _cursorAffinity = CURSOR_AFFINITY.forward,
     _lineHeightExplicit = nil,
+    _screenOffset = {0,0},
 
     caretDirty = true
 }
@@ -211,6 +256,7 @@ end
 ---@field tabInsertText string?
 ---@field maxHeight number?
 ---@field onSizeChange fun(newHeight: number[] {width, height})?
+---@field screenOffset number[]? {x, y} - relative to the widget rect, for example {0, -10} would move the text 10 pixels up from the bottom of the widget
 
 ---@public
 ---@param widgetName string can be nil
@@ -220,8 +266,8 @@ function Textbox:setup(widgetName, options)
     local inst = Textbox.new()
     inst.setupDone = true
     inst._lineHeightExplicit = options.lineHeight ~= nil
-    inst.fontSize = options.fontSize or DEFAULT_FONT_SIZE
-    inst.lineHeight = options.lineHeight or DEFAULT_LINE_HEIGHT
+    inst.fontSize = options.fontSize or inst.fontSize
+    inst.lineHeight = options.lineHeight or inst.lineHeight
     inst.lineHeightRatio = inst.lineHeight / inst.fontSize
     inst.onChanged = options.onChanged
     inst.onEnterKey = options.onEnterKey
@@ -233,9 +279,9 @@ function Textbox:setup(widgetName, options)
     inst.textOffsetY = options.textOffsetY or 0
     inst.parrentWidgetPath = widgetName
     inst.caretColor = options.caretColor or CARET_COLOR
-    inst._screenOffset = options.screenOffset or {0, 0}
+    inst._screenOffset = options.screenOffset or inst._screenOffset
 
-    local lytShort = "__tbx_lyt_" .. inst.uuid
+    local lytShort = WIDGET_SHORTS.lyt .. inst.uuid
 
     local rect = options.rect
     if not rect then
@@ -250,7 +296,7 @@ function Textbox:setup(widgetName, options)
     -- Store the UUID in the parent widget
     local parentWidgetData = widget.getData(widgetName) or {}
     if parentWidgetData.__tbx_uuid then
-        widget.removeChild(widgetName, "__tbx_lyt_" .. parentWidgetData.__tbx_uuid)
+        widget.removeChild(widgetName, WIDGET_SHORTS.lyt .. parentWidgetData.__tbx_uuid)
     end
     parentWidgetData.__tbx_uuid = inst.uuid
     widget.setData(widgetName, parentWidgetData)
@@ -261,30 +307,39 @@ function Textbox:setup(widgetName, options)
     local canvasRect = { 0, 0, rect[3], rect[4] - 1 }
     inst.rect = { 0, 0, rect[3], rect[4] }
 
+
+    -- Scroll are
     local scrollConfig = root.assetJson("/scripts/utils/tbx_scroll_config.json")
     scrollConfig.rect = { rect[1], rect[2], rect[3] + 20, rect[4] }
-    widget.addChild(lytPath, scrollConfig, "__tbx_sa_")
+    widget.addChild(lytPath, scrollConfig, WIDGET_SHORTS.scrollArea)
+    inst.scrollAreaPath = lytPath .. dotWidget(WIDGET_SHORTS.scrollArea)
 
+    -- Text canvas
     widget.addChild(lytPath, {
         type = "canvas", rect = canvasRect, zlevel = 2,
         captureMouseEvents = false, captureKeyboardEvents = false,
-    }, "__tbx_text_canvas")
+    }, WIDGET_SHORTS.textCanvas)
+    inst.textCanvasPath = lytPath .. dotWidget(WIDGET_SHORTS.textCanvas)
 
-    local carretName = "__tbx_carret_"
+    -- Carret canvas
     widget.addChild(lytPath, {
         type = "canvas", rect = canvasRect, zlevel = 3,
         captureMouseEvents = true, captureKeyboardEvents = false,
-    }, carretName)
+    }, WIDGET_SHORTS.carretCanvas)
+    inst.carretCanvasPath = lytPath .. dotWidget(WIDGET_SHORTS.carretCanvas)
 
+    -- Fake textbox for input capture
     widget.addChild(lytPath, {
         type = "textbox", position = { -1000, -1000 }, maxWidth = 200,
         textAlign = "left", callback = "null", enterKey = "null",
         escapeKey = "null", regex = "[\\s\\S]*"
-    }, "__tbx_fake_textbox")
-    inst.fakeTextbox = lytPath .. ".__tbx_fake_textbox"
+    }, WIDGET_SHORTS.fakeTextbox)
+    inst.fakeTextbox = lytPath .. dotWidget(WIDGET_SHORTS.fakeTextbox)
 
-    inst.textCanvas = widget.bindCanvas(lytPath .. ".__tbx_text_canvas")
-    inst.carretCanvas = widget.bindCanvas(lytPath .. "." .. carretName)
+    -- Bind canvases
+    inst.textCanvas = widget.bindCanvas(inst.textCanvasPath)
+    inst.carretCanvas = widget.bindCanvas(inst.carretCanvasPath)
+
     inst:_setupMeasureLabel()
 
     if not inst._lineHeightExplicit then
@@ -303,9 +358,9 @@ function Textbox:setup(widgetName, options)
     inst.minHeight = height
 
     widget.setSize(inst.path, { width, height })
-    widget.setSize(inst.path .. ".__tbx_text_canvas", canvasSize)
-    widget.setSize(inst.path .. ".__tbx_carret_", canvasSize)
-    widget.setSize(inst.path .. ".__tbx_sa_", { width + 20, height })
+    widget.setSize(inst.textCanvasPath, canvasSize)
+    widget.setSize(inst.carretCanvasPath, canvasSize)
+    widget.setSize(inst.scrollAreaPath, { width + 20, height })
 
     inst.rect = { 0, 0, width, height }
     inst.wrapWidth = width - PAD * 2
@@ -316,7 +371,6 @@ function Textbox:setup(widgetName, options)
 
     debugMessage("Textbox setup complete: %s", sb.print(inst))
     activeTextboxes[inst.uuid] = inst
-    debugMessage("Textbox setup complete: %s", inst.uuid)
     return inst
 end
 
@@ -365,11 +419,12 @@ end
 
 ---@protected
 function Textbox:_setupMeasureLabel()
-    local path = "__tbx_measure_label_" .. self.uuid
+    local path = WIDGET_SHORTS.measureLabel .. self.uuid
     pane.addWidget({
         type = "label",
         wrapWidth = 500,
         position = { -1000, -1000 },
+        visible = false,
         hAnchor = "left",
         vAnchor = "top",
         color = "#00000000",
@@ -527,6 +582,8 @@ function Textbox:_reflow()
             charXs = charXs,
             width = lineWidth,
             text = endsWithNewline and (textPart .. "\n") or textPart,
+            endsWithNewline = endsWithNewline,
+            visibleEndIdx = endsWithNewline and (endIdx - 1) or endIdx
         }
     end
 
@@ -587,7 +644,21 @@ function Textbox:_reflow()
                     end
                 else
                     local overflowChar = lineChars[#lineChars]
-                    flushLine(ci - 1, false)
+
+                    local prevChars = {}
+                    local prevCharXs = {}
+                    for i = 1, #lineChars - 1 do
+                        prevChars[i] = lineChars[i]
+                        prevCharXs[i] = charXs[i]
+                    end
+
+                    lines[#lines + 1] = {
+                        startIdx = lineStartCI,
+                        endIdx = ci - 1,
+                        charXs = prevCharXs,
+                        width = self:_lineTextWidth(table.concat(prevChars)),
+                        text = table.concat(prevChars),
+                    }
 
                     lineStartCI = ci
                     lineChars = { overflowChar }
@@ -637,9 +708,7 @@ function Textbox:_hitTestLine(line, x)
         end
     end
 
-    if bestPos >= line.startIdx
-            and bestPos <= line.endIdx
-            and utf8_charAt(self.text, bestPos) == "\n" then
+    if line.endsWithNewline and bestPos == line.endIdx then
         bestPos = math.max(line.startIdx - 1, bestPos - 1)
     end
 
@@ -648,20 +717,17 @@ end
 
 ---@protected
 function Textbox:_cursorToLineX(pos, affinity)
-    affinity = affinity or "forward"
+    affinity = affinity or CURSOR_AFFINITY.forward
     if #self.lines == 0 then
         return 1, 0
     end
 
     for li, line in ipairs(self.lines) do
-        local endsNL = line.endIdx >= line.startIdx
-                and utf8_charAt(self.text, line.endIdx) == "\n"
-        local endPos = endsNL and (line.endIdx - 1) or line.endIdx
+        local endPos = line.visibleEndIdx or line.endIdx
 
         if pos >= line.startIdx - 1 and pos <= endPos then
-            -- At a soft-wrap boundary, prefer next line if affinity is forward
-            if not endsNL and pos == endPos and li < #self.lines
-                    and affinity == "forward" then
+            if not line.endsWithNewline and pos == endPos and li < #self.lines
+                    and affinity == CURSOR_AFFINITY.forward then
                 return li + 1, 0
             end
 
@@ -699,16 +765,15 @@ function Textbox:_xToLinePos(lineIdx, targetX)
 end
 
 ---@protected
--- Так будет проще
 function Textbox:_determineClickAffinity(pos, lineIdx)
     local line = self.lines[lineIdx]
     if line and pos == line.endIdx
             and line.endIdx >= line.startIdx
-            and utf8_charAt(self.text, line.endIdx) ~= "\n"
+            and not line.endsWithNewline
             and lineIdx < #self.lines then
-        return "backward"
+        return CURSOR_AFFINITY.backward
     end
-    return "forward"
+    return CURSOR_AFFINITY.forward
 end
 
 -- ─────────────────────────── Selection ────────────────────────────────────────
@@ -857,7 +922,7 @@ end
 function Textbox:_onTextChanged()
     self.charLen = utf8_len(self.text)
     self.cursorPos = clamp(self.cursorPos, 0, self.charLen)
-    self._cursorAffinity = "forward"
+    self._cursorAffinity = CURSOR_AFFINITY.forward
 
     if self.selAnchor ~= nil then
         self.selAnchor = clamp(self.selAnchor, 0, self.charLen)
@@ -893,7 +958,7 @@ function Textbox:_finishMove(shift, affinity)
     if not shift then
         self.selAnchor = nil
     end
-    self._cursorAffinity = affinity or "forward"
+    self._cursorAffinity = affinity or CURSOR_AFFINITY.forward
     self:_resetBlink()
     self:_ensureCursorVisible()
     self:_invalidateCaret()
@@ -962,7 +1027,7 @@ function Textbox:_moveCursorEnd(shift)
         end
         self.cursorPos = ep
     end
-    self:_finishMove(shift, "backward")
+    self:_finishMove(shift, CURSOR_AFFINITY.backward)
 end
 ---@protected
 function Textbox:_moveCursorWordLeft(shift)
@@ -1088,10 +1153,10 @@ function Textbox:_processInput(dt, events, mousePos)
         local data = ev.data
         if ev.type == "KeyDown" and data then
             local key = data.key
-            if key == "LShift" or key == "RShift" then
+            if key == KEYS.LShift or key == KEYS.RShift then
                 self._shiftHeld = true
             end
-            if key == "LCtrl" or key == "RCtrl" then
+            if key == KEYS.LCtrl or key == KEYS.RShift then
                 self._ctrlHeld = true
             end
             if REPEATABLE_KEYS[key] then
@@ -1100,10 +1165,10 @@ function Textbox:_processInput(dt, events, mousePos)
             end
         elseif ev.type == "KeyUp" and data then
             local key = data.key
-            if key == "LShift" or key == "RShift" then
+            if key == KEYS.LShift or key == KEYS.RShift then
                 self._shiftHeld = false
             end
-            if key == "LCtrl" or key == "RCtrl" then
+            if key == KEYS.LCtrl or key == KEYS.RShift then
                 self._ctrlHeld = false
             end
             if key == self._heldKey then
@@ -1180,10 +1245,6 @@ function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
         (mouseScreen[1] - widgetRect[1]) / scale,
         (mouseScreen[2] - widgetRect[2]) / scale
     }
-
-    debugMessage("MOUSE SCREEN: %s", sb.printJson(mouseScreen))
-    debugMessage("WIDGET RECT: %s", sb.printJson(widgetRect))
-    debugMessage("LOCAL MOUSE: %s", sb.printJson(localMouse))
 
     if clampToCanvas then
         local sz = self.carretCanvas:size()
@@ -1292,53 +1353,54 @@ end
 ---@protected
 function Textbox:_processKeys(events)
     for _, ev in ipairs(events) do
+        debugMessage("Processing event: %s", sb.printJson(ev))
         if ev.type == "KeyDown" and ev.data then
             local key = ev.data.key
             local mods = ev.data.mods or {}
-            local shift = hasMod(mods, "LShift") or hasMod(mods, "RShift")
-            local ctrl = hasMod(mods, "LCtrl") or hasMod(mods, "RCtrl")
+            local shift = hasMod(mods, KEYS.LShift) or hasMod(mods, KEYS.RShift)
+            local ctrl = hasMod(mods, KEYS.LCtrl) or hasMod(mods, KEYS.RCtrl)
 
-            if key == "Backspace" then
+            if key == KEYS.Backspace then
                 if ctrl then
                     self:_deleteWordBack()
                 else
                     self:_deleteBack()
                 end
-            elseif key == "Del" then
+            elseif key == KEYS.Delete then
                 if ctrl then
                     self:_deleteWordForward()
                 else
                     self:_deleteForward()
                 end
-            elseif key == "Return" then
+            elseif key == KEYS.Return then
                 if shift then
                     self:_insertText("\n")
                 elseif self.onEnterKey then
                     self.onEnterKey()
                 end
-            elseif key == "Esc" then
+            elseif key == KEYS.Escape then
                 if self.onEscapeKey then
                     self.onEscapeKey()
                 end
-            elseif key == "Tab" then
+            elseif key == KEYS.Tab then
                 self:_insertText(self.tabSpaces or "  ")
-            elseif key == "Left" then
+            elseif key == KEYS.Left then
                 if ctrl then
                     self:_moveCursorWordLeft(shift)
                 else
                     self:_moveCursorLeft(shift)
                 end
-            elseif key == "Right" then
+            elseif key == KEYS.Right then
                 if ctrl then
                     self:_moveCursorWordRight(shift)
                 else
                     self:_moveCursorRight(shift)
                 end
-            elseif key == "Up" then
+            elseif key == KEYS.Up then
                 self:_moveCursorUp(shift)
-            elseif key == "Down" then
+            elseif key == KEYS.Down then
                 self:_moveCursorDown(shift)
-            elseif key == "Home" then
+            elseif key == KEYS.Home then
                 if ctrl then
                     self:_ensureSelection(shift)
                     self.cursorPos = 0
@@ -1346,7 +1408,7 @@ function Textbox:_processKeys(events)
                 else
                     self:_moveCursorHome(shift)
                 end
-            elseif key == "End" then
+            elseif key == KEYS.End then
                 if ctrl then
                     self:_ensureSelection(shift)
                     self.cursorPos = self.charLen
@@ -1354,16 +1416,16 @@ function Textbox:_processKeys(events)
                 else
                     self:_moveCursorEnd(shift)
                 end
-            elseif ctrl and key == "A" then
+            elseif ctrl and key == KEYS.A then
                 self.selAnchor = 0;
                 self.cursorPos = self.charLen;
                 self:_resetBlink()
-            elseif ctrl and key == "C" then
+            elseif ctrl and key == KEYS.C then
                 local sel = self:_getSelectedText()
                 if sel ~= "" then
                     clipboard.setText(sel)
                 end
-            elseif ctrl and key == "X" then
+            elseif ctrl and key == KEYS.X then
                 local sel = self:_getSelectedText()
                 if sel ~= "" then
                     clipboard.setText(sel)
@@ -1448,8 +1510,8 @@ function Textbox:_drawCaret()
 
     local selFrom, selTo = self:_getSelRange()
     if selFrom then
-        local fromLi, fromX = self:_cursorToLineX(selFrom, "forward")
-        local toLi, toX = self:_cursorToLineX(selTo, "backward")
+        local fromLi, fromX = self:_cursorToLineX(selFrom, CURSOR_AFFINITY.forward)
+        local toLi, toX = self:_cursorToLineX(selTo, CURSOR_AFFINITY.backward)
         local drawFrom = math.max(firstVisible, fromLi)
         local drawTo = math.min(lastVisible, toLi)
 
@@ -1511,11 +1573,11 @@ function Textbox:_updateAutoHeight()
 
         -- canvases
         local canvasSize = { width, height }
-        widget.setSize(self.path .. ".__tbx_text_canvas", canvasSize)
-        widget.setSize(self.path .. ".__tbx_carret_", canvasSize)
+        widget.setSize(self.textCanvasPath, canvasSize)
+        widget.setSize(self.carretCanvasPath, canvasSize)
 
         -- scroll area
-        widget.setSize(self.path .. ".__tbx_sa_", { width + 20, height })
+        widget.setSize(self.scrollAreaPath, { width + 20, height })
 
         self.rect = newRect
 
@@ -1558,7 +1620,7 @@ function Textbox:setText(text)
     self.charLen = utf8_len(self.text)
     self.cursorPos = self.charLen
     self.selAnchor = nil
-    self._cursorAffinity = "forward"
+    self._cursorAffinity = CURSOR_AFFINITY.forward
     self.scrollY = 0
     self:_invalidateAll()
     self:_reflow()
@@ -1665,7 +1727,7 @@ end
 function Textbox:setCursorPos(pos)
     self.cursorPos = clamp(pos, 0, self.charLen)
     self.selAnchor = nil
-    self._cursorAffinity = "forward"
+    self._cursorAffinity = CURSOR_AFFINITY.forward
     self:_ensureCursorVisible()
     self:_resetBlink()
     self:_invalidateCaret()

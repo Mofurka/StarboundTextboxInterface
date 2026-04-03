@@ -201,6 +201,7 @@ Textbox = {
     caretColor = CARET_COLOR,
     selectionColor = SELECTION_COLOR,
     textOffsetY = 0,
+    unfocusOnClickOutside = true,
     cache = {},
 
     -- callbacks
@@ -233,6 +234,7 @@ Textbox = {
 }
 Textbox.__index = Textbox
 
+---@return Textbox
 function Textbox.new()
     local self = setmetatable({}, Textbox)
     self.uuid = sb.makeUuid()
@@ -280,6 +282,7 @@ function Textbox:setup(widgetName, options)
     inst.parrentWidgetPath = widgetName
     inst.caretColor = options.caretColor or CARET_COLOR
     inst._screenOffset = options.screenOffset or inst._screenOffset
+    inst.unfocusOnClickOutside = options.unfocusOnClickOutside
 
     local lytShort = WIDGET_SHORTS.lyt .. inst.uuid
 
@@ -1309,7 +1312,9 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                 self:_resetBlink()
                 self._mouseWasDown = true
             else
-                self:blur()
+                if self.unfocusOnClickOutside then
+                    self:blur()
+                end
                 self._mouseWasDown = false
             end
 

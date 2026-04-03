@@ -1487,7 +1487,6 @@ function Textbox:_updateAutoHeight()
         return
     end
 
-    sb.setLogMap("LINECOUNT", self.minHeight)
     local contentHeight = self:_requiredHeightForLines(#self.lines)
     local newHeight = clamp(contentHeight, self.minHeight, self.maxHeight)
 

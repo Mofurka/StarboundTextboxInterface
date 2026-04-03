@@ -247,6 +247,14 @@ function Textbox:setup(widgetName, options)
     local lytPath = widgetName .. "." .. lytShort
     inst.path = lytPath
 
+    -- Store the UUID in the parent widget
+    local parentWidgetData = widget.getData(widgetName) or {}
+    if parentWidgetData.__tbx_uuid then
+        widget.removeChild(widgetName, "__tbx_lyt_" .. parentWidgetData.__tbx_uuid)
+    end
+    parentWidgetData.__tbx_uuid = inst.uuid
+    widget.setData(widgetName, parentWidgetData)
+
     local lytConfig = { type = "layout", rect = rect, layoutType = "basic" }
     widget.addChild(widgetName, lytConfig, lytShort)
 
@@ -1487,7 +1495,6 @@ function Textbox:_updateAutoHeight()
         return
     end
 
-    sb.setLogMap("LINECOUNT", self.minHeight)
     local contentHeight = self:_requiredHeightForLines(#self.lines)
     local newHeight = clamp(contentHeight, self.minHeight, self.maxHeight)
 

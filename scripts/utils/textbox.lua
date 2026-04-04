@@ -186,6 +186,7 @@ Textbox = {
     textDirty = true,
     fontSize = 8,
     lineHeight = 12,
+    lineSpacing = 0,
     lineHeightRatio = 0,
     wrapWidth = 180,
     text = "",
@@ -247,6 +248,7 @@ end
 ---@field rect? RectI
 ---@field fontSize number?
 ---@field lineHeight number?
+---@field lineSpacing number?
 ---@field hint string?
 ---@field textColor number[]? {r, g, b, a}
 ---@field hintColor number[]? {r, g, b, a}
@@ -259,6 +261,7 @@ end
 ---@field maxHeight number?
 ---@field onSizeChange fun(newHeight: number[] {width, height})?
 ---@field screenOffset number[]? {x, y} - relative to the widget rect, for example {0, -10} would move the text 10 pixels up from the bottom of the widget
+---@field unfocusOnClickOutside boolean? - whether the textbox should lose focus when the user clicks outside of it. Default is true.
 
 ---@public
 ---@param widgetName string can be nil
@@ -270,6 +273,7 @@ function Textbox:setup(widgetName, options)
     inst._lineHeightExplicit = options.lineHeight ~= nil
     inst.fontSize = options.fontSize or inst.fontSize
     inst.lineHeight = options.lineHeight or inst.lineHeight
+    inst.lineSpacing = math.max(0, math.floor((options.lineSpacing or inst.lineSpacing) + 0.5))
     inst.lineHeightRatio = inst.lineHeight / inst.fontSize
     inst.onChanged = options.onChanged
     inst.onEnterKey = options.onEnterKey
@@ -441,6 +445,17 @@ function Textbox:_getTextBaseY()
     local canvasH = self.carretCanvas:size()[2]
     local effectiveH = (#self.lines <= 1) and self.minHeight or canvasH
     return (effectiveH - PAD) + self.scrollY + (self.textOffsetY or 0)
+end
+
+---@protected
+function Textbox:_getLineSpacing(lineCount)
+    lineCount = lineCount or #self.lines
+    return lineCount > 1 and self.lineSpacing or 0
+end
+
+---@protected
+function Textbox:_getLineAdvance(lineCount)
+    return self.lineHeight + self:_getLineSpacing(lineCount)
 end
 
 ---@protected
@@ -754,8 +769,9 @@ end
 ---@protected
 function Textbox:_xyToCursor(clickX, clickY)
     local sz = self.carretCanvas:size()
+    local lineAdvance = self:_getLineAdvance()
     local lineIdx = clamp(
-            math.floor((sz[2] - PAD + self.scrollY - clickY) / self.lineHeight) + 1,
+            math.floor((sz[2] - PAD + self.scrollY - clickY) / lineAdvance) + 1,
             1, #self.lines)
     local line = self.lines[lineIdx]
     return line and self:_hitTestLine(line, clickX - PAD) or 0, lineIdx
@@ -1049,7 +1065,8 @@ end
 
 ---@protected
 function Textbox:_getContentHeight()
-    return #self.lines * self.lineHeight
+    local lineCount = #self.lines
+    return lineCount * self.lineHeight + math.max(0, lineCount - 1) * self:_getLineSpacing(lineCount)
 end
 ---@protected
 function Textbox:_getViewHeight()
@@ -1069,8 +1086,9 @@ function Textbox:_getVisibleLineRange()
     end
 
     local viewH = self:_getViewHeight()
-    local first = math.floor(self.scrollY / self.lineHeight) + 1
-    local last = math.ceil((self.scrollY + viewH) / self.lineHeight) + 1
+    local lineAdvance = self:_getLineAdvance(total)
+    local first = math.floor(self.scrollY / lineAdvance) + 1
+    local last = math.ceil((self.scrollY + viewH) / lineAdvance) + 1
 
     first = clamp(first, 1, total)
     last = clamp(last, first, total)
@@ -1109,13 +1127,14 @@ function Textbox:_ensureCursorVisible()
         return
     end]]
     local li = self:_cursorToLineX(self.cursorPos)
+    local lineAdvance = self:_getLineAdvance()
 
-    local cursorTop = (li - 1) * self.lineHeight
+    local cursorTop = (li - 1) * lineAdvance
     local cursorBot = cursorTop + self.lineHeight
 
     local innerViewH = math.max(1, viewH - PAD * 2)
 
-    local margin = math.floor(self.lineHeight * 0.5)
+    local margin = math.floor(lineAdvance * 0.5)
 
     local topLimit = self.scrollY + margin
     local bottomLimit = self.scrollY + innerViewH - margin
@@ -1282,8 +1301,9 @@ function Textbox:_processMouseEvents(events, mouseScreen)
         if ev.type == "MouseWheel" and ev.data and self.focused then
             local hit = self:_getMouseHit(mouseScreen)
             if hit then
+                local lineAdvance = self:_getLineAdvance()
                 self.scrollY = clamp(
-                        self.scrollY - ev.data.mouseWheel * self.lineHeight * 3,
+                        self.scrollY - ev.data.mouseWheel * lineAdvance * 3,
                         0, self:_getMaxScroll()
                 )
                 self:_invalidateCaret()
@@ -1331,8 +1351,6 @@ function Textbox:_processMouseEvents(events, mouseScreen)
         local localMouse = self:_screenToLocalMouse(mouseScreen, true)
         if localMouse then
             local pos, dragLi = self:_xyToCursor(localMouse[1], localMouse[2])
-            debugMessage("Mouse drag at: %s", sb.printJson(localMouse))
-            debugMessage("Drag hit line: %s", sb.print(dragLi))
             if pos ~= self.cursorPos then
                 self.cursorPos = pos
                 self._cursorAffinity = self:_determineClickAffinity(pos, dragLi)
@@ -1358,7 +1376,6 @@ end
 ---@protected
 function Textbox:_processKeys(events)
     for _, ev in ipairs(events) do
-        debugMessage("Processing event: %s", sb.printJson(ev))
         if ev.type == "KeyDown" and ev.data then
             local key = ev.data.key
             local mods = ev.data.mods or {}
@@ -1454,7 +1471,7 @@ function Textbox:_drawText()
 
     local metrics = self:_measureFontMetrics()
     local baseY = self:_getTextBaseY()
-    local lh = self.lineHeight
+    local lineAdvance = self:_getLineAdvance()
     local fs, color = self.fontSize, self.textColor
     local vInset = self:_getVerticalInset(metrics)
 
@@ -1474,7 +1491,7 @@ function Textbox:_drawText()
         for li = fromLi, toLi do
             local line = self.lines[li]
             if line then
-                local top = baseY - (li - 1) * lh
+                local top = baseY - (li - 1) * lineAdvance
                 local lineText = line.text or ""
                 if lineText ~= "" and lineText ~= "\n" then
                     if lineText:sub(-1) == "\n" then
@@ -1507,7 +1524,7 @@ function Textbox:_drawCaret()
 
     local metrics = self:_measureFontMetrics()
     local baseY = self:_getTextBaseY()
-    local lh = self.lineHeight
+    local lineAdvance = self:_getLineAdvance()
     local textH = metrics.textHeight
     local vInset = self:_getVerticalInset(metrics)
 
@@ -1523,7 +1540,7 @@ function Textbox:_drawCaret()
         for li = drawFrom, drawTo do
             local line = self.lines[li]
             if line then
-                local top = baseY - (li - 1) * lh
+                local top = baseY - (li - 1) * lineAdvance
                 local textTop = top - vInset
                 local textBot = textTop - textH
 
@@ -1540,7 +1557,7 @@ function Textbox:_drawCaret()
     if self.caretVisible then
         local li, cx = self:_cursorToLineX(self.cursorPos, self._cursorAffinity)
         if li >= firstVisible and li <= lastVisible then
-            local top = baseY - (li - 1) * lh
+            local top = baseY - (li - 1) * lineAdvance
             local textTop = top - vInset
             local textBot = textTop - textH
             local x = PAD + cx
@@ -1553,7 +1570,7 @@ function Textbox:_drawCaret()
 end
 
 function Textbox:_requiredHeightForLines(lineCount)
-    return lineCount == 1 and self.minHeight or (lineCount * self.lineHeight + PAD * 2)
+    return lineCount == 1 and self.minHeight or (lineCount * self.lineHeight + math.max(0, lineCount - 1) * self:_getLineSpacing(lineCount) + PAD * 2)
 end
 
 ---@protected
@@ -1829,6 +1846,26 @@ end
 ---@return number
 function Textbox:getFontSize()
     return self.fontSize
+end
+
+---@public
+---@param spacing number
+function Textbox:setLineSpacing(spacing)
+    local normalizedSpacing = math.max(0, math.floor((spacing or 0) + 0.5))
+    if self.lineSpacing == normalizedSpacing then
+        return
+    end
+
+    self.lineSpacing = normalizedSpacing
+    self:_invalidateAll()
+    self:_updateAutoHeight()
+    self:_ensureCursorVisible()
+end
+
+---@public
+---@return number
+function Textbox:getLineSpacing()
+    return self.lineSpacing
 end
 
 ---@public

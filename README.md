@@ -32,7 +32,7 @@ local textbox = Textbox:setup("widgetName", {
     -- All the provided parameters are optional
     rect = {0,0,200,200},
     fontSize = 8,
-    lineHeight = 12,
+    lineSpacing = 0,
     hint = "Textbox hint",
     hintColor = {255, 255, 255},
     selectionColor = {255, 255, 255},
@@ -251,6 +251,18 @@ Get current font size.
 
 ---
 
+#### `nil` textbox:setLineSpacing(`number` spacing)
+
+Set extra spacing between lines in pixels. Applied only when wrapped/content line count is geater than one.
+
+---
+
+#### `number` textbox:getLineSpacing()
+
+Get current extra spacing between lines in pixels.
+
+---
+
 #### `nil` textbox:setHint(`string` hint)
 
 Set placeholder (hint) text shown when empty and unfocused.
@@ -298,11 +310,12 @@ Cleanup and destroy all active textboxes.
 ## Controls
 
 | Key                | Action             |
-| ------------------ | ------------------ |
+|--------------------|--------------------|
 | ← →                | Move cursor        |
 | Ctrl + ← →         | Move by word       |
 | ↑ ↓                | Move between lines |
 | Home / End         | Line start / end   |
+| Ctrl Home / End    | Text start / end   |
 | Backspace / Delete | Remove text        |
 | Ctrl + Backspace   | Remove word        |
 | Ctrl + A           | Select all         |

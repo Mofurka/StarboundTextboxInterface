@@ -11,7 +11,7 @@ local function utf8_len(s)
     if not s or s == "" then
         return 0
     end
-    return s:len()
+    return utf8.len(s)
 end
 
 local function utf8_charAt(s, ci)
@@ -1233,7 +1233,9 @@ end
 ---@protected
 function Textbox:_getWidgetScreenRect()
     local panePos = pane.getPosition()
+    debugMessage("Pane position: %s", sb.printJson(panePos))
     local parentWidgetPos = widget.getPosition(self.parrentWidgetPath)
+    debugMessage("Parent widget position: %s", sb.printJson(parentWidgetPos))
     local parentPos = vec2.add(panePos, parentWidgetPos)
     local localPos = vec2.add(parentPos, self._layoutOffset)
 
@@ -1259,6 +1261,8 @@ function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
     end
 
     local widgetRect = self:_getWidgetScreenRect()
+    debugMessage("Widget rect: %s", sb.printJson(widgetRect))
+
     local scale = interface.scale()
 
     local localMouse = {
@@ -1271,7 +1275,7 @@ function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
         localMouse[1] = clamp(localMouse[1], 0, sz[1])
         localMouse[2] = clamp(localMouse[2], 0, sz[2])
     end
-
+    debugMessage("Local mouse: %s", sb.printJson(localMouse))
     return localMouse, widgetRect
 end
 
@@ -1396,7 +1400,7 @@ end
 ---@param txt string
 function Textbox:_startFakeTextboxPasteCoroutine(txt)
 
-    local totalChars = txt:len()
+    local totalChars = utf8.len(txt)
     if totalChars <= FAKE_TEXTBOX_COROUTINE_THRESHOLD then
         self:_insertText(txt)
         return
@@ -1561,8 +1565,6 @@ function Textbox:_drawText()
     if self.charLen == 0 and self.hint and self.hint ~= "" then
         drawParams.position[2] = baseY - vInset
         canvas:drawText(self.hint, drawParams, fs, self.hintColor)
-        debugMessage("Drawing line: %s", lineText)
-        debugMessage("Line pos: %s", sb.printJson(drawParams.position))
     else
         local fromLi, toLi = self:_getVisibleLineRange()
         for li = fromLi, toLi do

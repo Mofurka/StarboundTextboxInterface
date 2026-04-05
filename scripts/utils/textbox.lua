@@ -6,11 +6,12 @@
 require("/scripts/vec2.lua")
 require("/scripts/rect.lua")
 
+---@param s string
 local function utf8_len(s)
     if not s or s == "" then
         return 0
     end
-    return utf8.len(s) or 0
+    return s:len()
 end
 
 local function utf8_charAt(s, ci)
@@ -100,6 +101,8 @@ local CARET_COLOR = { 0, 0, 0, 255 }
 local SELECTION_COLOR = { 50, 100, 200, 80 }
 local KEY_REPEAT_DELAY = 0.5
 local KEY_REPEAT_INTERVAL = 0.05
+local FAKE_TEXTBOX_COROUTINE_THRESHOLD = 60000
+local FAKE_TEXTBOX_COROUTINE_CHUNK_SIZE = 30000
 
 local REPEATABLE_KEYS = {
     Backspace = true,
@@ -230,6 +233,7 @@ Textbox = {
     _cursorAffinity = CURSOR_AFFINITY.forward,
     _lineHeightExplicit = nil,
     _screenOffset = {0,0},
+    _fakeTextboxPasteCoroutine = nil,
 
     caretDirty = true
 }
@@ -825,8 +829,9 @@ function Textbox:_deleteSelection()
     self.selAnchor = nil
     return true
 end
+
 ---@protected
-function Textbox:_insertText(str)
+function Textbox:_insertText(str, suppressOnChanged)
     if not str or str == "" then
         return
     end
@@ -835,8 +840,9 @@ function Textbox:_insertText(str)
     self.text = before .. str .. (utf8_sub(self.text, self.cursorPos + 1) or "")
     self.cursorPos = self.cursorPos + utf8_len(str)
     self.selAnchor = nil
-    self:_onTextChanged()
+    self:_onTextChanged(suppressOnChanged)
 end
+
 ---@protected
 function Textbox:_deleteBack()
     if self:_deleteSelection() then
@@ -930,7 +936,7 @@ function Textbox:_deleteWordForward()
     end
 end
 ---@protected
-function Textbox:_onTextChanged()
+function Textbox:_onTextChanged(suppressOnChanged)
     self.charLen = utf8_len(self.text)
     self.cursorPos = clamp(self.cursorPos, 0, self.charLen)
     self._cursorAffinity = CURSOR_AFFINITY.forward
@@ -945,7 +951,7 @@ function Textbox:_onTextChanged()
     self:_ensureCursorVisible()
     self:_resetBlink()
 
-    if self.onChanged then
+    if self.onChanged and not suppressOnChanged then
         self.onChanged(self.text)
     end
 end
@@ -1358,11 +1364,90 @@ function Textbox:_pollFakeTextbox()
     if not self.fakeTextbox then
         return
     end
+
+    self:_resumeFakeTextboxPasteCoroutine()
+    if self._fakeTextboxPasteCoroutine then
+        return
+    end
+
     local txt = widget.getText(self.fakeTextbox)
     if txt and txt ~= "" then
-        self:_insertText(txt)
+        widget.setText(self.fakeTextbox, "")
+
+        if utf8_len(txt) > FAKE_TEXTBOX_COROUTINE_THRESHOLD then
+            self:_startFakeTextboxPasteCoroutine(txt)
+            self:_resumeFakeTextboxPasteCoroutine()
+        else
+            self:_insertText(txt)
+        end
+    end
+end
+
+---@protected
+function Textbox:_clearFakeTextboxPasteCoroutine(clearBufferedText)
+    self._fakeTextboxPasteCoroutine = nil
+
+    if clearBufferedText and self.fakeTextbox then
         widget.setText(self.fakeTextbox, "")
     end
+end
+
+---@protected
+---@param txt string
+function Textbox:_startFakeTextboxPasteCoroutine(txt)
+
+    local totalChars = txt:len()
+    if totalChars <= FAKE_TEXTBOX_COROUTINE_THRESHOLD then
+        self:_insertText(txt)
+        return
+    end
+
+
+    self._fakeTextboxPasteCoroutine = coroutine.create(function()
+        local fromChar = 1
+
+        while fromChar <= totalChars do
+            local toChar = math.min(totalChars, fromChar + FAKE_TEXTBOX_COROUTINE_CHUNK_SIZE - 1)
+            local chunk = utf8_sub(txt, fromChar, toChar)
+            local isLastChunk = toChar >= totalChars
+
+            if chunk ~= "" then
+                self:_insertText(chunk, not isLastChunk)
+            end
+
+            fromChar = toChar + 1
+            if fromChar <= totalChars then
+                coroutine.yield(fromChar)
+            end
+        end
+    end)
+end
+
+---@protected
+function Textbox:_resumeFakeTextboxPasteCoroutine()
+    local co = self._fakeTextboxPasteCoroutine
+    if not co then
+        return false
+    end
+
+    if coroutine.status(co) == "dead" then
+        self:_clearFakeTextboxPasteCoroutine(false)
+        return false
+    end
+
+    local ok, err = coroutine.resume(co)
+    if not ok then
+        sb.logError("[tbx.lua] Fake textbox coroutine failed: %s", tostring(err))
+        self:_clearFakeTextboxPasteCoroutine(false)
+        return false
+    end
+
+    if coroutine.status(co) == "dead" then
+        self:_clearFakeTextboxPasteCoroutine(false)
+        return false
+    end
+
+    return true
 end
 
 ---@protected
@@ -1630,6 +1715,7 @@ function Textbox:setText(text)
     if type(text) == "table" then
         text = table.concat(text, "\n")
     end
+    self:_clearFakeTextboxPasteCoroutine(true)
     self.text = text or ""
     self.charLen = utf8_len(self.text)
     self.cursorPos = self.charLen
@@ -1687,6 +1773,7 @@ end
 
 ---@public
 function Textbox:clear()
+    self:_clearFakeTextboxPasteCoroutine(true)
     self.text = ""
     self.charLen = 0
     self.cursorPos = 0
@@ -1739,6 +1826,7 @@ end
 
 ---@protected
 function Textbox:_cleanup()
+    self:_clearFakeTextboxPasteCoroutine(true)
     self:clear()
     self:_destroyMeasureLabel()
     pane.removeWidget(self.path)

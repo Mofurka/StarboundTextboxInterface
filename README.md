@@ -113,6 +113,18 @@ Get current textbox text.
 
 ---
 
+#### `string` textbox:getSelectedText()
+
+Get selected text.
+
+---
+
+#### `string` textbox:replaceSelectedText()
+
+Sets the text in the selected area.
+
+---
+
 #### `nil` textbox:setText(`string|string[]` text)
 
 Set text for the current textbox. Arrays are joined with `"\n"`.

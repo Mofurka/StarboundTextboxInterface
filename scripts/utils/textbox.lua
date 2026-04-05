@@ -811,14 +811,6 @@ function Textbox:_getSelRange()
     end
     return a, b
 end
----@protected
-function Textbox:_getSelectedText()
-    local from, to = self:_getSelRange()
-    if not from then
-        return ""
-    end
-    return utf8_sub(self.text, from + 1, to)
-end
 
 -- ─────────────────────────── Text editing ────────────────────────────────────
 ---@protected
@@ -1528,12 +1520,12 @@ function Textbox:_processKeys(events)
                 self.cursorPos = self.charLen;
                 self:_resetBlink()
             elseif ctrl and key == KEYS.C then
-                local sel = self:_getSelectedText()
+                local sel = self:getSelectedText()
                 if sel ~= "" then
                     clipboard.setText(sel)
                 end
             elseif ctrl and key == KEYS.X then
-                local sel = self:_getSelectedText()
+                local sel = self:getSelectedText()
                 if sel ~= "" then
                     clipboard.setText(sel)
                     self:_deleteSelection();
@@ -1735,6 +1727,22 @@ function Textbox:setText(text)
     self:_updateAutoHeight()
     self:_ensureCursorVisible()
     self:_resetBlink()
+end
+
+---@public
+---@return string
+function Textbox:getSelectedText()
+    local from, to = self:_getSelRange()
+    if not from then
+        return ""
+    end
+    return utf8_sub(self.text, from + 1, to)
+end
+
+---@public
+---@param newText string
+function Textbox:replaceSelectedText(newText)
+    self:_insertText(newText or "")
 end
 
 ---@public

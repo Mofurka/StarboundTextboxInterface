@@ -136,7 +136,6 @@ local KEYS = {
     X = "X",
 }
 
-
 local function debugMessage(msg, ...)
     if DEBUG then
         sb.logInfo("[tbx.lua] " .. msg, ...)
@@ -232,8 +231,15 @@ Textbox = {
     _ignoreInputFrame = false,
     _cursorAffinity = CURSOR_AFFINITY.forward,
     _lineHeightExplicit = nil,
-    _screenOffset = {0,0},
     _fakeTextboxPasteCoroutine = nil,
+
+
+    -- Global to local cords
+    _screenOffset = { 0, 0 },
+    _isChild = false,
+    _firstParent = nil,
+    _childrenRect = { 0, 0 },
+    _paneFeature = {},
 
     caretDirty = true
 }
@@ -291,6 +297,11 @@ function Textbox:setup(widgetName, options)
     inst.caretColor = options.caretColor or CARET_COLOR
     inst._screenOffset = options.screenOffset or inst._screenOffset
     inst.unfocusOnClickOutside = options.unfocusOnClickOutside
+    inst._paneFeature = Textbox.findPaneFeature()
+
+    if widgetName:find("%.") then
+        inst._isChild = true
+    end
 
     local lytShort = WIDGET_SHORTS.lyt .. inst.uuid
 
@@ -359,7 +370,6 @@ function Textbox:setup(widgetName, options)
     else
         inst.lineHeight = math.floor(inst.lineHeight + 0.5)
     end
-
 
     local width = rect[3] - rect[1]
     local height = rect[4] - rect[2]
@@ -1115,15 +1125,15 @@ function Textbox:_ensureCursorVisible()
     --local contentH = self:_getContentHeight()
     local viewH = self:_getViewHeight()
 
---[[    if contentH + PAD * 2 <= viewH then
-        if self.scrollY ~= 0 then
-            self.scrollY = 0
-            self:_invalidateAll()
-        else
-            self:_invalidateCaret()
-        end
-        return
-    end]]
+    --[[    if contentH + PAD * 2 <= viewH then
+            if self.scrollY ~= 0 then
+                self.scrollY = 0
+                self:_invalidateAll()
+            else
+                self:_invalidateCaret()
+            end
+            return
+        end]]
     local li = self:_cursorToLineX(self.cursorPos)
     local lineAdvance = self:_getLineAdvance()
 
@@ -1167,7 +1177,6 @@ function Textbox:_processInput(dt, events, mousePos)
         self._ignoreInputFrame = false
         return
     end
-
 
     for _, ev in ipairs(events) do
         local data = ev.data
@@ -1230,20 +1239,169 @@ function Textbox:_processInput(dt, events, mousePos)
     self:_processKeys(events)
 end
 
+function Textbox.findPaneFeature()
+    local cfg = config.getParameter("", {}) or {}
+    if type(cfg) ~= "table" then
+        return nil
+    end
+
+    if cfg.type == "panefeature" then
+        return cfg
+    end
+
+    for _, v in pairs(cfg) do
+        if type(v) == "table" then
+            if v.type == "panefeature" then
+                return v
+            end
+
+            for _, vv in pairs(v) do
+                if type(vv) == "table" and vv.type == "panefeature" then
+                    return vv
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+---@class WidgetPaneFeature
+---@field type string -- Он всегда равен "panefeature"
+---@field anchor string -- none, bottomLeft, bottomRight, topLeft, topRight, centerBottom, centerTop, centerLeft, centerRight, center
+---@field offset number[] -- [x, y]
+---@field positionLocked boolean, -- Просто нельзя двигать виджет, он всегда будет в одной позиции относительно якоря
+
+---@protected
+function Textbox:_splitWidgetPath(path)
+    local parts = {}
+    for part in string.gmatch(path or "", "[^%.]+") do
+        parts[#parts + 1] = part
+    end
+    return parts
+end
+
+---@protected
+function Textbox:_getChildChainOffset()
+    if not self._isChild then
+        return { 0, 0 }
+    end
+
+    if self._firstParent and self._childrenRect then
+        return self._childrenRect
+    end
+
+    local parts = self:_splitWidgetPath(self.parrentWidgetPath)
+    debugMessage("Widget path parts: %s", sb.printJson(parts))
+    if #parts == 0 then
+        self._firstParent = self.parrentWidgetPath
+        self._childrenRect = { 0, 0 }
+        return self._childrenRect
+    end
+
+    self._firstParent = parts[1]
+
+    local offset = { 0, 0 }
+    local currentPath = parts[1]
+
+
+    for i = 2, #parts do
+        currentPath = currentPath .. "." .. parts[i]
+        local childPos = widget.getPosition(currentPath) or { 0, 0 }
+        offset = vec2.add(offset, childPos)
+        debugMessage("Child chain part %s (%s) pos: %s", tostring(i), currentPath, sb.printJson(childPos))
+    end
+
+    self._childrenRect = offset
+    return offset
+end
+
+---@protected
+function Textbox:_getPaneAnchorOffset()
+    local feature = self._paneFeature
+    if not feature then
+        return { 0, 0 }
+    end
+    local anchor = feature.anchor or "none"
+
+    local screenSize = camera.screenSize()
+    local scale = interface.scale()
+    local paneSize = vec2.mul(pane.getSize(), scale)
+
+    local offset = { 0, 0 }
+
+    if anchor == "bottomLeft" or anchor == "none" then
+        offset = { 0, 0 }
+
+    elseif anchor == "bottomRight" then
+        offset = { screenSize[1] - paneSize[1], 0 }
+
+    elseif anchor == "topLeft" then
+        offset = { 0, screenSize[2] - paneSize[2] }
+
+    elseif anchor == "topRight" then
+        offset = { screenSize[1] - paneSize[1], screenSize[2] - paneSize[2] }
+
+    elseif anchor == "centerBottom" then
+        offset = {
+            (screenSize[1] - paneSize[1]) * 0.5,
+            0
+        }
+
+    elseif anchor == "centerTop" then
+        offset = {
+            (screenSize[1] - paneSize[1]) * 0.5,
+            screenSize[2] - paneSize[2]
+        }
+
+    elseif anchor == "centerLeft" then
+        offset = {
+            0,
+            (screenSize[2] - paneSize[2]) * 0.5
+        }
+
+    elseif anchor == "centerRight" then
+        offset = {
+            screenSize[1] - paneSize[1],
+            (screenSize[2] - paneSize[2]) * 0.5
+        }
+
+    elseif anchor == "center" then
+        offset = {
+            (screenSize[1] - paneSize[1]) * 0.5,
+            (screenSize[2] - paneSize[2]) * 0.5
+        }
+    end
+
+    local featureOffset = feature.offset or { 0, 0 }
+    return vec2.add(offset, vec2.mul(featureOffset, scale))
+end
+
+---@protected
+function Textbox:_getParentWidgetLocalPosition()
+    if self._isChild then
+        local childChain = self:_getChildChainOffset()
+        local firstParentPos = widget.getPosition(self._firstParent)
+        return vec2.add(firstParentPos, childChain)
+    end
+
+    return widget.getPosition(self.parrentWidgetPath)
+end
+
 ---@protected
 function Textbox:_getWidgetScreenRect()
     local panePos = pane.getPosition()
-    debugMessage("Pane position: %s", sb.printJson(panePos))
-    local parentWidgetPos = widget.getPosition(self.parrentWidgetPath)
-    debugMessage("Parent widget position: %s", sb.printJson(parentWidgetPos))
-    local parentPos = vec2.add(panePos, parentWidgetPos)
-    local localPos = vec2.add(parentPos, self._layoutOffset)
+    local anchorOffset = self:_getPaneAnchorOffset()
 
-    local extraOffset = self._screenOffset or {0, 0}
-    local finalPos = vec2.add(localPos, extraOffset)
+    local parentWidgetPos = self:_getParentWidgetLocalPosition()
 
-    local scale = interface.scale()
-    local screenPos = vec2.mul(finalPos, scale)
+    local uiPos = vec2.add(panePos, parentWidgetPos)
+    uiPos = vec2.add(uiPos, self._layoutOffset)
+    uiPos = vec2.add(uiPos, self._screenOffset)
+
+    local scale = interface.scale() or 1
+
+    local screenPos = vec2.add(anchorOffset, vec2.mul(uiPos, scale))
     local size = vec2.mul(self.carretCanvas:size(), scale)
 
     return {
@@ -1261,8 +1419,6 @@ function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
     end
 
     local widgetRect = self:_getWidgetScreenRect()
-    debugMessage("Widget rect: %s", sb.printJson(widgetRect))
-
     local scale = interface.scale()
 
     local localMouse = {
@@ -1275,7 +1431,6 @@ function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
         localMouse[1] = clamp(localMouse[1], 0, sz[1])
         localMouse[2] = clamp(localMouse[2], 0, sz[2])
     end
-    debugMessage("Local mouse: %s", sb.printJson(localMouse))
     return localMouse, widgetRect
 end
 
@@ -1405,7 +1560,6 @@ function Textbox:_startFakeTextboxPasteCoroutine(txt)
         self:_insertText(txt)
         return
     end
-
 
     self._fakeTextboxPasteCoroutine = coroutine.create(function()
         local fromChar = 1

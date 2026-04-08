@@ -1391,12 +1391,7 @@ end
 ---@protected
 function Textbox:_getWidgetScreenRect()
     local panePos = pane.getPosition()
-    local anchorOffset
-    if pane.anchorOffset then
-        anchorOffset = pane.anchorOffset()
-    else
-        anchorOffset = self:_getPaneAnchorOffset()
-    end
+    local anchorOffset = self:_getPaneAnchorOffset()
 
     local parentWidgetPos = self:_getParentWidgetLocalPosition()
 

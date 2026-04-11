@@ -20,6 +20,7 @@ A lightweight and flexible textbox implementation for Starbound UI, built on top
 - Placeholder (hint) support
 - Customizable appearance via public API
 - Dynamic height functionality
+- Redo/Undo operations
 
 ---
 
@@ -321,20 +322,22 @@ Cleanup and destroy all active textboxes.
 
 ## Controls
 
-| Key                | Action             |
-|--------------------|--------------------|
-| ← →                | Move cursor        |
-| Ctrl + ← →         | Move by word       |
-| ↑ ↓                | Move between lines |
-| Home / End         | Line start / end   |
-| Ctrl Home / End    | Text start / end   |
-| Backspace / Delete | Remove text        |
-| Ctrl + Backspace   | Remove word        |
-| Ctrl + A           | Select all         |
-| Ctrl + C           | Copy               |
-| Ctrl + X           | Cut                |
-| Ctrl + V           | Paste              |
-| Shift + Enter      | New line           |
+| Key                         | Action             |
+|-----------------------------|--------------------|
+| ← →                         | Move cursor        |
+| Ctrl + ← →                  | Move by word       |
+| ↑ ↓                         | Move between lines |
+| Home / End                  | Line start / end   |
+| Ctrl Home / End             | Text start / end   |
+| Backspace / Delete          | Remove text        |
+| Ctrl + Backspace            | Remove word        |
+| Ctrl + A                    | Select all         |
+| Ctrl + C                    | Copy               |
+| Ctrl + X                    | Cut                |
+| Ctrl + V                    | Paste              |
+| Ctrl + Z                    | Undo last action   |
+| Ctrl + Y (Ctrl + Shift + Z) | Redo last action   |
+| Shift + Enter               | New line           |
 
 ---
 

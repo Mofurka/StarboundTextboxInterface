@@ -2,56 +2,9 @@
 --- DateTime: 20.03.2026 11:04
 --- Please credit if you use or modify this code, thanks!
 --- Пожалуста, если вы используете или изменяете этот код, указывайте авторство, спасибо!
--- ─────────────────────────── utf8 ───────────────────────────────────
 require("/scripts/vec2.lua")
 require("/scripts/rect.lua")
-
----@param s string
-local function utf8_len(s)
-    if not s or s == "" then
-        return 0
-    end
-    return utf8.len(s)
-end
-
-local function utf8_charAt(s, ci)
-    if ci < 1 or not s or s == "" then
-        return ""
-    end
-    local b = utf8.offset(s, ci)
-    if not b then
-        return ""
-    end
-    local nb = utf8.offset(s, ci + 1)
-    return nb and s:sub(b, nb - 1) or s:sub(b)
-end
-
-local function utf8_sub(s, startChar, endChar)
-    if not s or s == "" then
-        return ""
-    end
-    endChar = endChar or utf8_len(s)
-    local sb = utf8.offset(s, startChar)
-    if not sb then
-        return ""
-    end
-    local eb
-    if endChar >= utf8_len(s) then
-        eb = #s
-    else
-        eb = utf8.offset(s, endChar + 1)
-        eb = eb and (eb - 1) or #s
-    end
-    return s:sub(sb, eb)
-end
-
-local function isWordChar(ch)
-    return #ch > 1 or ch:match("[%w_]") ~= nil
-end
-
-local function isHorizontalSpace(ch)
-    return ch == " "
-end
+require("/interface/textarea/scripts/utils/utf8.lua")
 
 -- ─────────────────────────── modules ────────────────────────────
 
@@ -110,7 +63,9 @@ local REPEATABLE_KEYS = {
     Left = true,
     Right = true,
     Up = true,
-    Down = true
+    Down = true,
+    Z = true,
+    Y = true
 }
 
 local KEYS = {
@@ -134,6 +89,17 @@ local KEYS = {
     C = "C",
     V = "V",
     X = "X",
+    Z = "Z",
+    Y = "Y"
+}
+
+local ACTION_TYPES = {
+    insert = "insert",
+    backspace = "backspace",
+    delete = "delete",
+    paste = "paste",
+    selection = "selection",
+    other = "other",
 }
 
 local function debugMessage(msg, ...)
@@ -206,6 +172,14 @@ Textbox = {
     textOffsetY = 0,
     unfocusOnClickOutside = true,
     cache = {},
+
+    -- undo/redo history
+    undoHistory = {},
+    redoHistory = {},
+    _lastSavedState = nil,
+    _lastActionType = nil,
+    _lastActionTime = 0,
+    _actionGroupTimeThreshold = 0.5,
 
     -- callbacks
     onChanged = nil,
@@ -330,8 +304,8 @@ function Textbox:setup(widgetName, options)
     inst.rect = { 0, 0, rect[3], rect[4] }
 
 
-    -- Scroll are
-    local scrollConfig = root.assetJson("/scripts/utils/tbx_scroll_config.json")
+    -- Scroll arena
+    local scrollConfig = root.assetJson("/interface/textarea/tbx_scroll_config.json")
     scrollConfig.rect = { rect[1], rect[2], rect[3] + 20, rect[4] }
     widget.addChild(lytPath, scrollConfig, WIDGET_SHORTS.scrollArea)
     inst.scrollAreaPath = lytPath .. dotWidget(WIDGET_SHORTS.scrollArea)
@@ -389,6 +363,7 @@ function Textbox:setup(widgetName, options)
     inst:_reflow()
     inst.scrollY = 0
     inst:_invalidateAll()
+    inst:_saveInitialState()
 
     debugMessage("Textbox setup complete: %s", sb.print(inst))
     activeTextboxes[inst.uuid] = inst
@@ -845,18 +820,23 @@ function Textbox:_insertText(str, suppressOnChanged)
     if not str or str == "" then
         return
     end
-    self:_deleteSelection()
+    local hadSelection = self:_deleteSelection()
+    if hadSelection then
+        -- Break the action grouping chain when replacing a selection
+        self._lastActionType = nil
+        self._timeSinceLastAction = self._actionGroupTimeThreshold
+    end
     local before = self.cursorPos > 0 and utf8_sub(self.text, 1, self.cursorPos) or ""
     self.text = before .. str .. (utf8_sub(self.text, self.cursorPos + 1) or "")
     self.cursorPos = self.cursorPos + utf8_len(str)
     self.selAnchor = nil
-    self:_onTextChanged(suppressOnChanged)
+    self:_onTextChanged(ACTION_TYPES.insert, suppressOnChanged)
 end
 
 ---@protected
 function Textbox:_deleteBack()
     if self:_deleteSelection() then
-        self:_onTextChanged();
+        self:_onTextChanged(ACTION_TYPES.backspace);
         return
     end
     if self.cursorPos <= 0 then
@@ -864,19 +844,19 @@ function Textbox:_deleteBack()
     end
     self:_splice(self.cursorPos - 1, self.cursorPos)
     self.cursorPos = self.cursorPos - 1
-    self:_onTextChanged()
+    self:_onTextChanged(ACTION_TYPES.backspace)
 end
 ---@protected
 function Textbox:_deleteForward()
     if self:_deleteSelection() then
-        self:_onTextChanged();
+        self:_onTextChanged(ACTION_TYPES.delete);
         return
     end
     if self.cursorPos >= self.charLen then
         return
     end
     self:_splice(self.cursorPos, self.cursorPos + 1)
-    self:_onTextChanged()
+    self:_onTextChanged(ACTION_TYPES.delete)
 end
 
 -- ─────────────────────────── Word ─────────────────────────────────
@@ -905,7 +885,7 @@ end
 ---@protected
 function Textbox:_deleteWordBack()
     if self:_deleteSelection() then
-        self:_onTextChanged();
+        self:_onTextChanged(ACTION_TYPES.backspace);
         return
     end
     if self.cursorPos <= 0 then
@@ -927,13 +907,13 @@ function Textbox:_deleteWordBack()
     if newPos < self.cursorPos then
         self:_splice(newPos, self.cursorPos)
         self.cursorPos = newPos
-        self:_onTextChanged()
+        self:_onTextChanged(ACTION_TYPES.backspace)
     end
 end
 ---@protected
 function Textbox:_deleteWordForward()
     if self:_deleteSelection() then
-        self:_onTextChanged();
+        self:_onTextChanged(ACTION_TYPES.delete);
         return
     end
     if self.cursorPos >= self.charLen then
@@ -942,11 +922,117 @@ function Textbox:_deleteWordForward()
     local newPos = self:_wordBoundaryRight(self.cursorPos)
     if newPos > self.cursorPos then
         self:_splice(self.cursorPos, newPos)
-        self:_onTextChanged()
+        self:_onTextChanged(ACTION_TYPES.delete)
     end
 end
+
+-- ─────────────────────────── Undo/Redo ─────────────────────────────────────
+
 ---@protected
-function Textbox:_onTextChanged(suppressOnChanged)
+---@return table
+function Textbox:_saveState()
+    return {
+        text = self.text,
+        cursorPos = self.cursorPos,
+        selAnchor = self.selAnchor,
+        scrollY = self.scrollY,
+    }
+end
+
+---@protected
+function Textbox:_restoreState(state, suppressOnChanged)
+    if not state then
+        return
+    end
+    self.text = state.text
+    self.cursorPos = state.cursorPos
+    self.selAnchor = state.selAnchor
+    self.scrollY = state.scrollY
+    self.charLen = utf8_len(self.text)
+
+    self:_invalidateAll()
+    self:_reflow()
+    self:_updateAutoHeight()
+    self:_ensureCursorVisible()
+    self:_resetBlink()
+
+    if self.onChanged and not suppressOnChanged then
+        self.onChanged(self.text)
+    end
+end
+
+---@protected
+function Textbox:_saveInitialState()
+    self._lastSavedState = self:_saveState()
+    self._lastActionType = nil
+    self._lastActionTime = 0
+end
+
+---@protected
+---@param actionType string
+---@param currentTime number
+function Textbox:_pushUndoState(actionType, currentTime)
+    local currentState = self:_saveState()
+
+    if not self._lastSavedState or
+       currentState.text ~= self._lastSavedState.text then
+        
+        -- Check if we should group this action with the previous one
+        local shouldGroup = false
+        if self._lastActionType and actionType then
+            -- Group continuous insertions or deletions
+            if (self._lastActionType == ACTION_TYPES.insert and actionType == ACTION_TYPES.insert) or
+               (self._lastActionType == ACTION_TYPES.backspace and actionType == ACTION_TYPES.backspace) or
+               (self._lastActionType == ACTION_TYPES.delete and actionType == ACTION_TYPES.delete) then
+                -- Only group if time threshold hasn't been exceeded
+                if (currentTime - self._lastActionTime) < self._actionGroupTimeThreshold then
+                    shouldGroup = true
+                end
+            end
+        end
+
+        -- Only push to history if we're not grouping
+        if not shouldGroup then
+            table.insert(self.undoHistory, self._lastSavedState or self:_saveState())
+            self.redoHistory = {}
+        end
+
+        self._lastSavedState = currentState
+        self._lastActionType = actionType
+        self._lastActionTime = currentTime
+    end
+end
+
+---@protected
+function Textbox:_undo()
+    if #self.undoHistory == 0 then
+        return
+    end
+
+    table.insert(self.redoHistory, self._lastSavedState)
+    self._lastSavedState = table.remove(self.undoHistory)
+    self:_restoreState(self._lastSavedState, true)
+    
+    self._lastActionType = nil
+    self._lastActionTime = 0
+end
+
+---@protected
+function Textbox:_redo()
+    if #self.redoHistory == 0 then
+        return
+    end
+
+    table.insert(self.undoHistory, self._lastSavedState)
+    self._lastSavedState = table.remove(self.redoHistory)
+    self:_restoreState(self._lastSavedState, true)
+    
+    self._lastActionType = nil
+    self._lastActionTime = 0
+end
+
+---@protected
+function Textbox:_onTextChanged(actionType, suppressOnChanged)
     self.charLen = utf8_len(self.text)
     self.cursorPos = clamp(self.cursorPos, 0, self.charLen)
     self._cursorAffinity = CURSOR_AFFINITY.forward
@@ -963,6 +1049,11 @@ function Textbox:_onTextChanged(suppressOnChanged)
 
     if self.onChanged and not suppressOnChanged then
         self.onChanged(self.text)
+    end
+
+    if not suppressOnChanged then
+        local currentTime = 0
+        self:_pushUndoState(actionType or ACTION_TYPES.other, currentTime)
     end
 end
 ---@protected
@@ -1185,7 +1276,7 @@ function Textbox:_processInput(dt, events, mousePos)
             if key == KEYS.LShift or key == KEYS.RShift then
                 self._shiftHeld = true
             end
-            if key == KEYS.LCtrl or key == KEYS.RShift then
+            if key == KEYS.LCtrl or key == KEYS.RCtrl then
                 self._ctrlHeld = true
             end
             if REPEATABLE_KEYS[key] then
@@ -1197,7 +1288,7 @@ function Textbox:_processInput(dt, events, mousePos)
             if key == KEYS.LShift or key == KEYS.RShift then
                 self._shiftHeld = false
             end
-            if key == KEYS.LCtrl or key == KEYS.RShift then
+            if key == KEYS.LCtrl or key == KEYS.RCtrl then
                 self._ctrlHeld = false
             end
             if key == self._heldKey then
@@ -1217,16 +1308,20 @@ function Textbox:_processInput(dt, events, mousePos)
         if self._heldTimer >= KEY_REPEAT_DELAY then
             local elapsed = self._heldTimer - KEY_REPEAT_DELAY
             if math.floor(elapsed / KEY_REPEAT_INTERVAL) > 0 then
+                local mods = {}
+                if self._shiftHeld then
+                    table.insert(mods, KEYS.LShift)
+                    table.insert(mods, KEYS.RShift)
+                end
+                if self._ctrlHeld then
+                    table.insert(mods, KEYS.LCtrl)
+                    table.insert(mods, KEYS.RCtrl)
+                end
                 local fakeEvent = {
                     type = "KeyDown",
                     data = {
                         key = self._heldKey,
-                        mods = {
-                            LShift = self._shiftHeld,
-                            RShift = self._shiftHeld,
-                            LCtrl = self._ctrlHeld,
-                            RCtrl = self._ctrlHeld,
-                        }
+                        mods = mods
                     }
                 }
                 self:_processKeys({ fakeEvent })
@@ -1687,7 +1782,13 @@ function Textbox:_processKeys(events)
                 if sel ~= "" then
                     clipboard.setText(sel)
                     self:_deleteSelection();
-                    self:_onTextChanged()
+                    self:_onTextChanged(ACTION_TYPES.delete)
+                end
+            elseif ctrl and (key == KEYS.Z or key == KEYS.Y) then
+                if key == KEYS.Y or shift then
+                    self:_redo()
+                else
+                    self:_undo()
                 end
             end
         end
@@ -1883,6 +1984,9 @@ function Textbox:setText(text)
     self:_updateAutoHeight()
     self:_ensureCursorVisible()
     self:_resetBlink()
+    self.undoHistory = {}
+    self.redoHistory = {}
+    self:_saveInitialState()
 end
 
 ---@public
@@ -1935,10 +2039,13 @@ function Textbox:clear()
     self.cursorPos = 0
     self.selAnchor = nil
     self.scrollY = 0
+    self.undoHistory = {}
+    self.redoHistory = {}
     self:_invalidateAll()
     self:_reflow()
     self.textCanvas:clear()
     self.carretCanvas:clear()
+    self:_saveInitialState()
 end
 
 ---@public

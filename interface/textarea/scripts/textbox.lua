@@ -2,56 +2,9 @@
 --- DateTime: 20.03.2026 11:04
 --- Please credit if you use or modify this code, thanks!
 --- Пожалуста, если вы используете или изменяете этот код, указывайте авторство, спасибо!
--- ─────────────────────────── utf8 ───────────────────────────────────
 require("/scripts/vec2.lua")
 require("/scripts/rect.lua")
-
----@param s string
-local function utf8_len(s)
-    if not s or s == "" then
-        return 0
-    end
-    return utf8.len(s)
-end
-
-local function utf8_charAt(s, ci)
-    if ci < 1 or not s or s == "" then
-        return ""
-    end
-    local b = utf8.offset(s, ci)
-    if not b then
-        return ""
-    end
-    local nb = utf8.offset(s, ci + 1)
-    return nb and s:sub(b, nb - 1) or s:sub(b)
-end
-
-local function utf8_sub(s, startChar, endChar)
-    if not s or s == "" then
-        return ""
-    end
-    endChar = endChar or utf8_len(s)
-    local sb = utf8.offset(s, startChar)
-    if not sb then
-        return ""
-    end
-    local eb
-    if endChar >= utf8_len(s) then
-        eb = #s
-    else
-        eb = utf8.offset(s, endChar + 1)
-        eb = eb and (eb - 1) or #s
-    end
-    return s:sub(sb, eb)
-end
-
-local function isWordChar(ch)
-    return #ch > 1 or ch:match("[%w_]") ~= nil
-end
-
-local function isHorizontalSpace(ch)
-    return ch == " "
-end
+require("/interface/textarea/scripts/utils/utf8.lua")
 
 -- ─────────────────────────── modules ────────────────────────────
 
@@ -351,8 +304,8 @@ function Textbox:setup(widgetName, options)
     inst.rect = { 0, 0, rect[3], rect[4] }
 
 
-    -- Scroll are
-    local scrollConfig = root.assetJson("/scripts/utils/tbx_scroll_config.json")
+    -- Scroll arena
+    local scrollConfig = root.assetJson("/interface/textarea/tbx_scroll_config.json")
     scrollConfig.rect = { rect[1], rect[2], rect[3] + 20, rect[4] }
     widget.addChild(lytPath, scrollConfig, WIDGET_SHORTS.scrollArea)
     inst.scrollAreaPath = lytPath .. dotWidget(WIDGET_SHORTS.scrollArea)

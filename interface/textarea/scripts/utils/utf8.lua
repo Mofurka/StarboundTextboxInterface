@@ -1,14 +1,14 @@
 -- ─────────────────────────── utf8 ───────────────────────────────────
 
 ---@param s string
-local function utf8_len(s)
+function utf8_len(s)
     if not s or s == "" then
         return 0
     end
     return utf8.len(s)
 end
 
-local function utf8_charAt(s, ci)
+function utf8_charAt(s, ci)
     if ci < 1 or not s or s == "" then
         return ""
     end
@@ -20,7 +20,7 @@ local function utf8_charAt(s, ci)
     return nb and s:sub(b, nb - 1) or s:sub(b)
 end
 
-local function utf8_sub(s, startChar, endChar)
+function utf8_sub(s, startChar, endChar)
     if not s or s == "" then
         return ""
     end
@@ -39,10 +39,10 @@ local function utf8_sub(s, startChar, endChar)
     return s:sub(sb, eb)
 end
 
-local function isWordChar(ch)
+function isWordChar(ch)
     return #ch > 1 or ch:match("[%w_]") ~= nil
 end
 
-local function isHorizontalSpace(ch)
+function isHorizontalSpace(ch)
     return ch == " "
 end

@@ -257,7 +257,7 @@ function Combobox:bind(widgetName, values, onSelect, options)
         local li = widget.getListSelected(innerListPath)
         if li then
             if onSelect then
-                cb:onSelect(
+                cb.onSelect(
                     widget.getData(widgetPath(innerListPath, li)), 
                     widget.getText(widgetPath(innerListPath, li, "option"))
                 )

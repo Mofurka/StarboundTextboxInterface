@@ -2,10 +2,25 @@
 
 A lightweight and flexible textbox implementation for Starbound UI, built on top of canvas rendering.
 
-> Author: https://github.com/Mofurka  
+> Authors: https://github.com/Mofurka, https://github.com/KrashV
 > Please credit if you use or modify this code  
 
 ---
+
+## Installtaion
+
+> [!IMPORTANT]
+> This module is intended to be a submodule for your project.
+> Since Starbound does not support relative paths, you MUST install this at the following path:
+
+
+`/interface/StarboundTextboxInterface`
+
+You can use the following git command to add this submodule to your repo:
+
+```
+git submodule add https://github.com/Mofurka/StarboundTextboxInterface StarboundTextboxInterface
+```
 
 ## ✨ Features
 
@@ -57,7 +72,7 @@ local textbox = Textbox:setup("widgetName", {
 
 ### Setup Guide
 
-You should put the `require("/scripts/utils/textbox.lua")` at the beggining or at the end of your file.
+You should put the `require("/interface/StarboundTextboxInterface/textarea/scripts/textbox.lua")` at the beggining or at the end of your file.
 
 Dpending on the method there will be two different implementations:
 
@@ -66,7 +81,7 @@ Dpending on the method there will be two different implementations:
 You need to add textbox hooks like this:
 
 ```lua
-require("/scripts/utils/textbox.lua")
+require("/interface/StarboundTextboxInterface/textarea/scripts/textbox.lua")
 
 function init()
     Textbox.init()
@@ -95,7 +110,7 @@ end
 function uninit()
 end
 
-require("/scripts/utils/textbox.lua")
+require("/interface/StarboundTextboxInterface/textarea/scripts/textbox.lua")
 ```
 
 ---
@@ -365,7 +380,7 @@ A flexible dropdown combobox implementation for Starbound UI, allowing users to 
 First, add the require statement to your script:
 
 ```lua
-require "/interface/combobox/scripts/combobox.lua"
+require "/interface/StarboundTextboxInterface/combobox/scripts/combobox.lua"
 ```
 
 Then bind the combobox to an existing button widget:
@@ -567,7 +582,7 @@ A promise-based animation system for Starbound UI widgets, enabling smooth trans
 ### Setup
 
 ```lua
-require "/interface/animatedWidgets.lua"
+require "/interface/StarboundTextboxInterface/animatedWidgets.lua"
 
 -- In your update function, update the animation system each frame:
 function update(dt)
@@ -578,7 +593,7 @@ end
 ### Basic Example
 
 ```lua
-require "/interface/animatedWidgets.lua"
+require "/interface/StarboundTextboxInterface/animatedWidgets.lua"
 
 function init()
     -- Create an animated widget wrapper around an existing widget
@@ -730,7 +745,7 @@ end)
 ### Chained Animations
 
 ```lua
-require "/interface/animatedWidgets.lua"
+require "/interface/StarboundTextboxInterface/animatedWidgets.lua"
 
 function init()
     local widget = AnimatedWidget:bind("animatedBox")

@@ -4,7 +4,7 @@
 --- Пожалуста, если вы используете или изменяете этот код, указывайте авторство, спасибо!
 require("/scripts/vec2.lua")
 require("/scripts/rect.lua")
-require("/interface/textarea/scripts/utils/utf8.lua")
+require("/interface/StarboundTextboxInterface/textarea/scripts/utils/utf8.lua")
 
 -- ─────────────────────────── modules ────────────────────────────
 
@@ -305,7 +305,7 @@ function Textbox:setup(widgetName, options)
 
 
     -- Scroll arena
-    local scrollConfig = root.assetJson("/interface/textarea/tbx_scroll_config.json")
+    local scrollConfig = root.assetJson("/interface/StarboundTextboxInterface/textarea/tbx_scroll_config.json")
     scrollConfig.rect = { rect[1], rect[2], rect[3] + 20, rect[4] }
     widget.addChild(lytPath, scrollConfig, WIDGET_SHORTS.scrollArea)
     inst.scrollAreaPath = lytPath .. dotWidget(WIDGET_SHORTS.scrollArea)

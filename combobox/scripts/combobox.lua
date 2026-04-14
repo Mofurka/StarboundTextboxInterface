@@ -12,10 +12,10 @@ end
 ---@field textOffset Vec2F - Offset of the text within the list item
 ---@field spacing Vec2F - Spacing between the list items
 local DEFAULT_SCHEMA = {
-    background = "/interface/combobox/templates/background.png",
-    backgroundFilter = "/interface/combobox/templates/backgroundFilter.png",
-    listSelected = "/interface/combobox/templates/listselected.png",
-    listUnselected = "/interface/combobox/templates/listunselected.png",
+    background = "/interface/StarboundTextboxInterface/combobox/templates/background.png",
+    backgroundFilter = "/interface/StarboundTextboxInterface/combobox/templates/backgroundFilter.png",
+    listSelected = "/interface/StarboundTextboxInterface/combobox/templates/listselected.png",
+    listUnselected = "/interface/StarboundTextboxInterface/combobox/templates/listunselected.png",
     textOffset = {5, 2},
     spacing = {0, 0}
 }

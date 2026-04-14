@@ -544,6 +544,249 @@ end
 
 ---
 
+# Animated Widgets
+
+A promise-based animation system for Starbound UI widgets, enabling smooth transitions and sequential animations with callbacks.
+
+## ✨ Features
+
+- Smooth position animations (move)
+- Progress bar animations
+- Rotation with optional center point
+- Scaling with optional center point
+- Widget size transitions
+- Pane size transitions
+- Typewriter text effect
+- Callback system for animation completion/errors
+- Sequential and chained animations
+
+---
+
+## 📦 Usage
+
+### Setup
+
+```lua
+require "/interface/animatedWidgets.lua"
+
+-- In your update function, update the animation system each frame:
+function update(dt)
+    animatedWidgets:update(dt)
+end
+```
+
+### Basic Example
+
+```lua
+require "/interface/animatedWidgets.lua"
+
+function init()
+    -- Create an animated widget wrapper around an existing widget
+    local widget = AnimatedWidget:bind("myWidget")
+    
+    -- Create an animation and register callbacks
+    widget:move({100, 100}, 2.0)  -- Move to (100, 100) over 2 seconds
+        :onSuccess(function()
+            sb.logInfo("Animation complete!")
+        end)
+end
+
+function update(dt)
+    animatedWidgets:update(dt)
+end
+```
+
+---
+
+## Public API
+
+#### `AnimatedWidget` AnimatedWidget:bind(`string` widgetName)
+
+Create an animated widget wrapper for the given widget name.
+
+---
+
+### Animation Methods
+
+#### `MovePromise` widget:move(`Vec2F` destination, `number` duration)
+
+Animate widget position to a destination over the specified duration.
+
+**Parameters:**
+- `destination`: Target position `{x, y}`
+- `duration`: Animation duration in seconds
+
+**Returns:** Promise object with callback methods
+
+---
+
+#### `ProcessPromise` widget:process(`number` oldValue, `number` newValue, `number` duration)
+
+Animate a progress bar from one value to another.
+
+**Parameters:**
+- `oldValue`: Starting progress value
+- `newValue`: Ending progress value
+- `duration`: Animation duration in seconds
+
+**Returns:** Promise object with callback methods
+
+---
+
+#### `RotateImagePromise` widget:rotate(`number` startAngle, `number` endAngle, `number` duration, `Vec2F|nil` rotationCenter)
+
+Rotate an image widget from one angle to another.
+
+**Parameters:**
+- `startAngle`: Starting rotation angle
+- `endAngle`: Ending rotation angle
+- `duration`: Animation duration in seconds
+- `rotationCenter`: Optional rotation pivot point `{x, y}`. If provided, maintains rotation center relative to widget position.
+
+**Returns:** Promise object with callback methods
+
+---
+
+#### `ScaleImagePromise` widget:scale(`number` startScale, `number` endScale, `number` duration, `Vec2F|nil` scalingCenter)
+
+Scale an image widget from one scale to another.
+
+**Parameters:**
+- `startScale`: Starting scale factor
+- `endScale`: Ending scale factor
+- `duration`: Animation duration in seconds
+- `scalingCenter`: Optional scaling pivot point `{x, y}`. If provided, maintains scale center relative to widget position.
+
+**Returns:** Promise object with callback methods
+
+---
+
+#### `SetSizePromise` widget:setSize(`Vec2F` newSize, `number` duration)
+
+Smoothly resize a widget from its current size to a new size.
+
+**Parameters:**
+- `newSize`: Target size `{width, height}`
+- `duration`: Animation duration in seconds
+
+**Returns:** Promise object with callback methods
+
+---
+
+#### `SetPaneSizePromise` widget:setPaneSize(`Vec2F` newSize, `number` duration)
+
+Smoothly resize the entire pane from its current size to a new size.
+
+**Parameters:**
+- `newSize`: Target pane size `{width, height}`
+- `duration`: Animation duration in seconds
+
+**Returns:** Promise object with callback methods
+
+---
+
+#### `SetTextPromise` widget:setText(`string` text, `number` duration)
+
+Display text using a typewriter effect (letter by letter) over the specified duration.
+
+**Parameters:**
+- `text`: Target text to display
+- `duration`: Animation duration in seconds (time to display all characters)
+
+**Returns:** Promise object with callback methods
+
+---
+
+### Promise Callbacks
+
+All animation methods return a promise object with the following methods:
+
+#### `nil` promise:onSuccess(`function` callback)
+
+Register a callback to fire when the animation completes successfully.
+
+```lua
+widget:move({100, 100}, 2.0):onSuccess(function()
+    sb.logInfo("Move animation finished!")
+end)
+```
+
+---
+
+#### `nil` promise:onError(`function` callback)
+
+Register a callback to fire if the animation encounters an error.
+
+```lua
+widget:move({100, 100}, 2.0):onError(function(error)
+    sb.logError("Animation error: %s", error)
+end)
+```
+
+---
+
+## Advanced Examples
+
+### Chained Animations
+
+```lua
+require "/interface/animatedWidgets.lua"
+
+function init()
+    local widget = AnimatedWidget:bind("animatedBox")
+    
+    -- Chain multiple animations
+    widget:move({50, 50}, 1.0):onSuccess(function()
+        widget:rotate(0, 360, 2.0):onSuccess(function()
+            widget:scale(1, 1.5, 1.0)
+        end)
+    end)
+end
+
+function update(dt)
+    animatedWidgets:update(dt)
+end
+```
+
+---
+
+### Scale with Center Point
+
+```lua
+local widget = AnimatedWidget:bind("scalingIcon")
+
+-- Scale from 1x to 2x around the center point (64, 64)
+widget:scale(1.0, 2.0, 1.5, {64, 64})
+```
+
+---
+
+### Typewriter Text Effect
+
+```lua
+local widget = AnimatedWidget:bind("textLabel")
+
+-- Display text character by character over 3 seconds
+widget:setText("Hello, Starbound!", 3.0):onSuccess(function()
+    sb.logInfo("Text fully displayed")
+end)
+```
+
+---
+
+### Pane Resize Animation
+
+```lua
+-- Animate the entire pane from current size to a new size
+local widget = AnimatedWidget:bind("dummy")
+
+widget:setPaneSize({800, 600}, 2.0):onSuccess(function()
+    sb.logInfo("Pane resized!")
+end)
+```
+
+---
+
 ## License
 
 Free to use and modify. Attribution is appreciated.

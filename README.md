@@ -467,6 +467,7 @@ Configuration options for the combobox:
   - `spacing` - `{x, y}` spacing between items
 - `onOpen` _(function)_ - Callback when dropdown opens.
 - `onClose` _(function)_ - Callback when dropdown closes.
+- `sortKeys` _(boolean)_ - Whether to sort the table keys.
 
 ---
 

@@ -1,6 +1,11 @@
 -- Combobox class.lua
 require "/scripts/vec2.lua"
+require "/scripts/util.lua"
 
+
+local function widgetPath(...)
+    return table.concat({ ... }, ".")
+end
 
 local function widgetPath(...)
     return table.concat({ ... }, ".")
@@ -66,7 +71,7 @@ Combobox = {
 
 local comboboxes = {}
 
-function Combobox:_new(widgetName, onSelect, values, defaultValue, onClose, onOpen)
+function Combobox:_new(widgetName, onSelect, values, defaultValue, onClose, onOpen, sortKeys)
     local obj = {}
     obj.widgetName = widgetName
     obj.onSelect = onSelect
@@ -77,6 +82,8 @@ function Combobox:_new(widgetName, onSelect, values, defaultValue, onClose, onOp
     end
     obj.onOpen = onOpen or function()
     end
+    obj.sortKeys = sortKeys
+    obj.keys = sortKeys and util.orderedKeys(obj.values) or util.keys(obj.values)
 
     setmetatable(obj, self)
     self.__index = self
@@ -94,6 +101,7 @@ end
 ---@field closeOnSelect boolean - Whether to close the combobox after selection
 ---@field onClose function - Callback function when the combobox is closed
 ---@field onOpen function - Callback function when the combobox is opened
+---@field sortKeys boolean - Whether to sort the table keys
 
 
 --- Bind a combobox to a button widget
@@ -248,7 +256,7 @@ function Combobox:bind(widgetName, values, onSelect, options)
     -- Create and store combobox
     local wrapperFullPath = widgetPath(parentFullWidgetName, wrapperName)
 
-    local cb = self:_new(wrapperFullPath, onSelect, values, options.defaultValue, options.onClose, options.onOpen)
+    local cb = self:_new(wrapperFullPath, onSelect, values, options.defaultValue, options.onClose, options.onOpen, options.sortKeys)
 
     -- Create list item and register the callbacks
     widget.registerMemberCallback(wrapperFullPath, "comboboxSelect", function()
@@ -291,12 +299,13 @@ function Combobox:fillValues(searchText, defaultValue)
     local listPath = widgetPath(self.widgetName, self.li, WIDGET_NAME.layout, WIDGET_NAME.scrollArea, WIDGET_NAME.list)
     widget.clearListItems(listPath)
 
-    for value, name in pairs(self.values) do
+    for _, name in ipairs(self.keys) do
+        local value = self.values[name]
         if not searchText or name:lower():find(searchText:lower(), nil, true) then
 
             local li = widget.addListItem(listPath)
-            widget.setText(widgetPath(listPath, li, "option"), name)
-            widget.setData(widgetPath(listPath, li), value)
+            widget.setText(widgetPath(listPath, li, "option"), value)
+            widget.setData(widgetPath(listPath, li), name)
 
             if defaultValue and value == defaultValue then
                 widget.setListSelected(widgetPath(listPath, li))
@@ -309,6 +318,8 @@ end
 
 function Combobox:updateValues(values, defaultValue)
     self.values = values or {}
+    self.keys = self.sortKeys and util.orderedKeys(self.values) or util.keys(self.values)
+
     self:fillValues(nil, defaultValue)
 end
 

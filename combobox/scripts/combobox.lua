@@ -143,7 +143,6 @@ function Combobox:bind(widgetName, values, onSelect, options)
         layoutType = "basic",
         size = backgroundSize,
         position = {0, 0},
-        visible = false,
         children = {
             ["backgroundCombobox"] = {
                 type = "image",
@@ -232,6 +231,7 @@ function Combobox:bind(widgetName, values, onSelect, options)
         type = "list",
         position = wrapperListPosition,
         callback = "null",
+        visible = false,
         schema = {
             spacing = {0, 0},
             memberSize = backgroundSize,
@@ -324,7 +324,7 @@ function Combobox:updateValues(values, defaultValue)
 end
 
 function Combobox:toggle()
-    local isCurrentlyVisible = widget.active(widgetPath(self.widgetName, self.li, WIDGET_NAME.layout))
+    local isCurrentlyVisible = widget.active(self.widgetName)
     if isCurrentlyVisible then
         self:close()
     else
@@ -333,14 +333,14 @@ function Combobox:toggle()
 end
 
 function Combobox:close()
-    widget.setVisible(widgetPath(self.widgetName, self.li, WIDGET_NAME.layout), false)
+    widget.setVisible(self.widgetName, false)
     if self.onClose then
         self.onClose()
     end
 end
 
 function Combobox:open()
-    widget.setVisible(widgetPath(self.widgetName, self.li, WIDGET_NAME.layout), true)
+    widget.setVisible(self.widgetName, true)
     if self.onOpen then
         self.onOpen()
     end

@@ -4,7 +4,7 @@
 --- Пожалуста, если вы используете или изменяете этот код, указывайте авторство, спасибо!
 require("/scripts/vec2.lua")
 require("/scripts/rect.lua")
-require("/interface/StarboundTextboxInterface/textarea/scripts/utils/utf8.lua")
+require("/interface/StarboundTextboxInterface/scipts/utf8/utf8.lua")
 
 -- ─────────────────────────── modules ────────────────────────────
 
@@ -800,8 +800,8 @@ end
 -- ─────────────────────────── Text editing ────────────────────────────────────
 ---@protected
 function Textbox:_splice(from, to)
-    local before = from > 0 and utf8_sub(self.text, 1, from) or ""
-    self.text = before .. (utf8_sub(self.text, to + 1) or "")
+    local before = from > 0 and utf8.sub(self.text, 1, from) or ""
+    self.text = before .. (utf8.sub(self.text, to + 1) or "")
 end
 ---@protected
 function Textbox:_deleteSelection()
@@ -826,9 +826,9 @@ function Textbox:_insertText(str, suppressOnChanged)
         self._lastActionType = nil
         self._timeSinceLastAction = self._actionGroupTimeThreshold
     end
-    local before = self.cursorPos > 0 and utf8_sub(self.text, 1, self.cursorPos) or ""
-    self.text = before .. str .. (utf8_sub(self.text, self.cursorPos + 1) or "")
-    self.cursorPos = self.cursorPos + utf8_len(str)
+    local before = self.cursorPos > 0 and utf8.sub(self.text, 1, self.cursorPos) or ""
+    self.text = before .. str .. (utf8.sub(self.text, self.cursorPos + 1) or "")
+    self.cursorPos = self.cursorPos + utf8.len(str)
     self.selAnchor = nil
     self:_onTextChanged(ACTION_TYPES.insert, suppressOnChanged)
 end
@@ -863,10 +863,10 @@ end
 ---@protected
 function Textbox:_wordBoundaryLeft(pos)
     local text = self.text
-    while pos > 0 and not isWordChar(utf8_charAt(text, pos)) do
+    while pos > 0 and not isWordChar(utf8.charAt(text, pos)) do
         pos = pos - 1
     end
-    while pos > 0 and isWordChar(utf8_charAt(text, pos)) do
+    while pos > 0 and isWordChar(utf8.charAt(text, pos)) do
         pos = pos - 1
     end
     return pos
@@ -874,10 +874,10 @@ end
 ---@protected
 function Textbox:_wordBoundaryRight(pos)
     local text, len = self.text, self.charLen
-    while pos < len and not isWordChar(utf8_charAt(text, pos + 1)) do
+    while pos < len and not isWordChar(utf8.charAt(text, pos + 1)) do
         pos = pos + 1
     end
-    while pos < len and isWordChar(utf8_charAt(text, pos + 1)) do
+    while pos < len and isWordChar(utf8.charAt(text, pos + 1)) do
         pos = pos + 1
     end
     return pos
@@ -892,12 +892,12 @@ function Textbox:_deleteWordBack()
         return
     end
 
-    local prevChar = utf8_charAt(self.text, self.cursorPos)
+    local prevChar = utf8.charAt(self.text, self.cursorPos)
     local newPos
 
     if prevChar == "\n" then
         newPos = self.cursorPos - 1
-        while newPos > 0 and utf8_charAt(self.text, newPos) == "\n" do
+        while newPos > 0 and utf8.charAt(self.text, newPos) == "\n" do
             newPos = newPos - 1
         end
     else
@@ -948,7 +948,7 @@ function Textbox:_restoreState(state, suppressOnChanged)
     self.cursorPos = state.cursorPos
     self.selAnchor = state.selAnchor
     self.scrollY = state.scrollY
-    self.charLen = utf8_len(self.text)
+    self.charLen = utf8.len(self.text)
 
     self:_invalidateAll()
     self:_reflow()
@@ -1033,7 +1033,7 @@ end
 
 ---@protected
 function Textbox:_onTextChanged(actionType, suppressOnChanged)
-    self.charLen = utf8_len(self.text)
+    self.charLen = utf8.len(self.text)
     self.cursorPos = clamp(self.cursorPos, 0, self.charLen)
     self._cursorAffinity = CURSOR_AFFINITY.forward
 
@@ -1140,7 +1140,7 @@ function Textbox:_moveCursorEnd(shift)
     local line = self.lines[li]
     if line then
         local ep = line.endIdx
-        if ep >= line.startIdx and utf8_charAt(self.text, ep) == "\n" then
+        if ep >= line.startIdx and utf8.charAt(self.text, ep) == "\n" then
             ep = math.max(line.startIdx - 1, ep - 1)
         end
         self.cursorPos = ep
@@ -1628,7 +1628,7 @@ function Textbox:_pollFakeTextbox()
     if txt and txt ~= "" then
         widget.setText(self.fakeTextbox, "")
 
-        if utf8_len(txt) > FAKE_TEXTBOX_COROUTINE_THRESHOLD then
+        if utf8.len(txt) > FAKE_TEXTBOX_COROUTINE_THRESHOLD then
             self:_startFakeTextboxPasteCoroutine(txt)
             self:_resumeFakeTextboxPasteCoroutine()
         else
@@ -1661,7 +1661,7 @@ function Textbox:_startFakeTextboxPasteCoroutine(txt)
 
         while fromChar <= totalChars do
             local toChar = math.min(totalChars, fromChar + FAKE_TEXTBOX_COROUTINE_CHUNK_SIZE - 1)
-            local chunk = utf8_sub(txt, fromChar, toChar)
+            local chunk = utf8.sub(txt, fromChar, toChar)
             local isLastChunk = toChar >= totalChars
 
             if chunk ~= "" then
@@ -1974,7 +1974,7 @@ function Textbox:setText(text)
     end
     self:_clearFakeTextboxPasteCoroutine(true)
     self.text = text or ""
-    self.charLen = utf8_len(self.text)
+    self.charLen = utf8.len(self.text)
     self.cursorPos = self.charLen
     self.selAnchor = nil
     self._cursorAffinity = CURSOR_AFFINITY.forward
@@ -1996,7 +1996,7 @@ function Textbox:getSelectedText()
     if not from then
         return ""
     end
-    return utf8_sub(self.text, from + 1, to)
+    return utf8.sub(self.text, from + 1, to)
 end
 
 ---@public

@@ -1,7 +1,7 @@
 require "/scripts/vec2.lua"
 require "/scripts/messageutil.lua"
 require "/scripts/util.lua"
-require "/scripts/utf8.lua"
+require "/interface/StarboundTextboxInterface/scipts/utf8/utf8.lua"
 
 -- Define TimedPromiseKeeper as a subclass of PromiseKeeper
 TimedPromiseKeeper = {}

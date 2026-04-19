@@ -90,7 +90,8 @@ local KEYS = {
     V = "V",
     X = "X",
     Z = "Z",
-    Y = "Y"
+    Y = "Y",
+    U = "U",
 }
 
 local ACTION_TYPES = {
@@ -1703,93 +1704,100 @@ function Textbox:_resumeFakeTextboxPasteCoroutine()
     return true
 end
 
+
+
+local KEY_DISPATCH = {
+    [KEYS.Backspace] = function(self, ctrl, shift)
+        if ctrl then self:_deleteWordBack() else self:_deleteBack() end
+    end,
+    [KEYS.Delete] = function(self, ctrl, shift)
+        if ctrl then self:_deleteWordForward() else self:_deleteForward() end
+    end,
+    [KEYS.Return] = function(self, ctrl, shift)
+        if shift then
+            self:_insertText("\n")
+        elseif self.onEnterKey then
+            self.onEnterKey()
+        end
+    end,
+    [KEYS.Escape] = function(self, ctrl, shift)
+        if self.onEscapeKey then self.onEscapeKey() end
+    end,
+    [KEYS.Tab] = function(self, ctrl, shift)
+        self:_insertText(self.tabSpaces or "  ")
+    end,
+    [KEYS.Left] = function(self, ctrl, shift)
+        if ctrl then self:_moveCursorWordLeft(shift) else self:_moveCursorLeft(shift) end
+    end,
+    [KEYS.Right] = function(self, ctrl, shift)
+        if ctrl then self:_moveCursorWordRight(shift) else self:_moveCursorRight(shift) end
+    end,
+    [KEYS.Up] = function(self, ctrl, shift)
+        self:_moveCursorUp(shift)
+    end,
+    [KEYS.Down] = function(self, ctrl, shift)
+        self:_moveCursorDown(shift)
+    end,
+    [KEYS.Home] = function(self, ctrl, shift)
+        if ctrl then
+            self:_ensureSelection(shift)
+            self.cursorPos = 0
+            self:_finishMove(shift)
+        else
+            self:_moveCursorHome(shift)
+        end
+    end,
+    [KEYS.End] = function(self, ctrl, shift)
+        if ctrl then
+            self:_ensureSelection(shift)
+            self.cursorPos = self.charLen
+            self:_finishMove(shift)
+        else
+            self:_moveCursorEnd(shift)
+        end
+    end,
+    [KEYS.A] = function(self, ctrl, shift)
+        if not ctrl then return end
+        self.selAnchor = 0
+        self.cursorPos = self.charLen
+        self:_resetBlink()
+    end,
+    [KEYS.C] = function(self, ctrl, shift)
+        if not ctrl then return end
+        local sel = self:getSelectedText()
+        if sel ~= "" then clipboard.setText(sel) end
+    end,
+    [KEYS.X] = function(self, ctrl, shift)
+        if not ctrl then return end
+        local sel = self:getSelectedText()
+        if sel ~= "" then
+            clipboard.setText(sel)
+            self:_deleteSelection()
+            self:_onTextChanged(ACTION_TYPES.delete)
+        end
+    end,
+    [KEYS.Z] = function(self, ctrl, shift)
+        if not ctrl then return end
+        if shift then self:_redo() else self:_undo() end
+    end,
+    [KEYS.Y] = function(self, ctrl, shift)
+        if ctrl then self:_redo() end
+    end,
+}
+
+
 ---@protected
 function Textbox:_processKeys(events)
     for _, ev in ipairs(events) do
         if ev.type == "KeyDown" and ev.data then
-            local key = ev.data.key
-            local mods = ev.data.mods or {}
-            local shift = hasMod(mods, KEYS.LShift) or hasMod(mods, KEYS.RShift)
-            local ctrl = hasMod(mods, KEYS.LCtrl) or hasMod(mods, KEYS.RCtrl)
+            local key    = ev.data.key
+            local mods   = ev.data.mods or {}
+            local shift  = hasMod(mods, KEYS.LShift) or hasMod(mods, KEYS.RShift)
+            local ctrl   = hasMod(mods, KEYS.LCtrl)  or hasMod(mods, KEYS.RCtrl)
 
-            if key == KEYS.Backspace then
-                if ctrl then
-                    self:_deleteWordBack()
-                else
-                    self:_deleteBack()
-                end
-            elseif key == KEYS.Delete then
-                if ctrl then
-                    self:_deleteWordForward()
-                else
-                    self:_deleteForward()
-                end
-            elseif key == KEYS.Return then
-                if shift then
-                    self:_insertText("\n")
-                elseif self.onEnterKey then
-                    self.onEnterKey()
-                end
-            elseif key == KEYS.Escape then
-                if self.onEscapeKey then
-                    self.onEscapeKey()
-                end
-            elseif key == KEYS.Tab then
-                self:_insertText(self.tabSpaces or "  ")
-            elseif key == KEYS.Left then
-                if ctrl then
-                    self:_moveCursorWordLeft(shift)
-                else
-                    self:_moveCursorLeft(shift)
-                end
-            elseif key == KEYS.Right then
-                if ctrl then
-                    self:_moveCursorWordRight(shift)
-                else
-                    self:_moveCursorRight(shift)
-                end
-            elseif key == KEYS.Up then
-                self:_moveCursorUp(shift)
-            elseif key == KEYS.Down then
-                self:_moveCursorDown(shift)
-            elseif key == KEYS.Home then
-                if ctrl then
-                    self:_ensureSelection(shift)
-                    self.cursorPos = 0
-                    self:_finishMove(shift)
-                else
-                    self:_moveCursorHome(shift)
-                end
-            elseif key == KEYS.End then
-                if ctrl then
-                    self:_ensureSelection(shift)
-                    self.cursorPos = self.charLen
-                    self:_finishMove(shift)
-                else
-                    self:_moveCursorEnd(shift)
-                end
-            elseif ctrl and key == KEYS.A then
-                self.selAnchor = 0;
-                self.cursorPos = self.charLen;
-                self:_resetBlink()
-            elseif ctrl and key == KEYS.C then
-                local sel = self:getSelectedText()
-                if sel ~= "" then
-                    clipboard.setText(sel)
-                end
-            elseif ctrl and key == KEYS.X then
-                local sel = self:getSelectedText()
-                if sel ~= "" then
-                    clipboard.setText(sel)
-                    self:_deleteSelection();
-                    self:_onTextChanged(ACTION_TYPES.delete)
-                end
-            elseif ctrl and (key == KEYS.Z or key == KEYS.Y) then
-                if key == KEYS.Y or shift then
-                    self:_redo()
-                else
-                    self:_undo()
-                end
+            local handler = KEY_DISPATCH[key]
+            if handler then
+                handler(self, ctrl, shift)
             end
         end
     end

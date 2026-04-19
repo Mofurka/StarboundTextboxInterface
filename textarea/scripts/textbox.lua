@@ -1707,12 +1707,15 @@ end
 
 
 local KEY_DISPATCH = {
+    ---@param self Textbox
     [KEYS.Backspace] = function(self, ctrl, shift)
         if ctrl then self:_deleteWordBack() else self:_deleteBack() end
     end,
+    ---@param self Textbox
     [KEYS.Delete] = function(self, ctrl, shift)
         if ctrl then self:_deleteWordForward() else self:_deleteForward() end
     end,
+    ---@param self Textbox
     [KEYS.Return] = function(self, ctrl, shift)
         if shift then
             self:_insertText("\n")
@@ -1720,24 +1723,31 @@ local KEY_DISPATCH = {
             self.onEnterKey()
         end
     end,
+    ---@param self Textbox
     [KEYS.Escape] = function(self, ctrl, shift)
-        if self.onEscapeKey then self.onEscapeKey() end
+        if self.onEscapeKey then self:onEscapeKey() end
     end,
+    ---@param self Textbox
     [KEYS.Tab] = function(self, ctrl, shift)
         self:_insertText(self.tabSpaces or "  ")
     end,
+    ---@param self Textbox
     [KEYS.Left] = function(self, ctrl, shift)
         if ctrl then self:_moveCursorWordLeft(shift) else self:_moveCursorLeft(shift) end
     end,
+    ---@param self Textbox
     [KEYS.Right] = function(self, ctrl, shift)
         if ctrl then self:_moveCursorWordRight(shift) else self:_moveCursorRight(shift) end
     end,
+    ---@param self Textbox
     [KEYS.Up] = function(self, ctrl, shift)
         self:_moveCursorUp(shift)
     end,
+    ---@param self Textbox
     [KEYS.Down] = function(self, ctrl, shift)
         self:_moveCursorDown(shift)
     end,
+    ---@param self Textbox
     [KEYS.Home] = function(self, ctrl, shift)
         if ctrl then
             self:_ensureSelection(shift)
@@ -1747,6 +1757,7 @@ local KEY_DISPATCH = {
             self:_moveCursorHome(shift)
         end
     end,
+    ---@param self Textbox
     [KEYS.End] = function(self, ctrl, shift)
         if ctrl then
             self:_ensureSelection(shift)
@@ -1756,17 +1767,20 @@ local KEY_DISPATCH = {
             self:_moveCursorEnd(shift)
         end
     end,
+    ---@param self Textbox
     [KEYS.A] = function(self, ctrl, shift)
         if not ctrl then return end
         self.selAnchor = 0
         self.cursorPos = self.charLen
         self:_resetBlink()
     end,
+    ---@param self Textbox
     [KEYS.C] = function(self, ctrl, shift)
         if not ctrl then return end
         local sel = self:getSelectedText()
         if sel ~= "" then clipboard.setText(sel) end
     end,
+    ---@param self Textbox
     [KEYS.X] = function(self, ctrl, shift)
         if not ctrl then return end
         local sel = self:getSelectedText()
@@ -1776,10 +1790,12 @@ local KEY_DISPATCH = {
             self:_onTextChanged(ACTION_TYPES.delete)
         end
     end,
+    ---@param self Textbox
     [KEYS.Z] = function(self, ctrl, shift)
         if not ctrl then return end
         if shift then self:_redo() else self:_undo() end
     end,
+    ---@param self Textbox
     [KEYS.Y] = function(self, ctrl, shift)
         if ctrl then self:_redo() end
     end,

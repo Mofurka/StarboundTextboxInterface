@@ -54,6 +54,8 @@ local CARET_COLOR = { 0, 0, 0, 255 }
 local SELECTION_COLOR = { 50, 100, 200, 80 }
 local KEY_REPEAT_DELAY = 0.5
 local KEY_REPEAT_INTERVAL = 0.05
+local DOUBLE_CLICK_INTERVAL = 0.4
+local DOUBLE_CLICK_MAX_DISTANCE = 4
 local FAKE_TEXTBOX_COROUTINE_THRESHOLD = 60000
 local FAKE_TEXTBOX_COROUTINE_CHUNK_SIZE = 30000
 
@@ -199,6 +201,8 @@ Textbox = {
     -- my private shit pls dont touch it
     _mouseWasDown = false,
     _mouseLeftHeld = false,
+    _doubleClickTimer = 0,
+    _lastClickMouse = nil,
     _shiftHeld = false,
     _ctrlHeld = false,
     _heldKey = nil,
@@ -798,6 +802,36 @@ function Textbox:_getSelRange()
     return a, b
 end
 
+---@protected
+function Textbox:_selectWordAtCursor(pos)
+    if self.charLen == 0 then
+        return false
+    end
+
+    local charIdx = nil
+    local rightChar = pos < self.charLen and utf8.charAt(self.text, pos + 1) or nil
+    if rightChar and isWordChar(rightChar) then
+        charIdx = pos + 1
+    else
+        local leftChar = pos > 0 and utf8.charAt(self.text, pos) or nil
+        if leftChar and isWordChar(leftChar) then
+            charIdx = pos
+        end
+    end
+
+    if not charIdx then
+        return false
+    end
+
+    self.selAnchor = self:_wordBoundaryLeft(charIdx)
+    self.cursorPos = self:_wordBoundaryRight(charIdx - 1)
+    self._cursorAffinity = CURSOR_AFFINITY.backward
+    self:_resetBlink()
+    self:_ensureCursorVisible()
+    self:_invalidateCaret()
+    return true
+end
+
 -- ─────────────────────────── Text editing ────────────────────────────────────
 ---@protected
 function Textbox:_splice(from, to)
@@ -1259,6 +1293,8 @@ end
 ---@protected
 function Textbox:_processInput(dt, events, mousePos)
     self.caretTimer = self.caretTimer + dt
+    self._doubleClickTimer = math.max(0, (self._doubleClickTimer or 0) - dt)
+
     if self.caretTimer >= CARET_BLINK_INTERVAL then
         self.caretTimer = self.caretTimer - CARET_BLINK_INTERVAL
         self.caretVisible = not self.caretVisible
@@ -1572,23 +1608,50 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                 self:focus()
                 local pos, clickedLi = self:_xyToCursor(localMouse[1], localMouse[2])
                 self._cursorAffinity = self:_determineClickAffinity(pos, clickedLi)
+                local clickCount = ev.data.count or ev.data.clickCount or ev.data.clicks
+                if not clickCount and input.mouseDown then
+                    clickCount = input.mouseDown("MouseLeft")
+                end
+                clickCount = clickCount or 1
+                local isDoubleClick = clickCount >= 2
 
-                if self._shiftHeld then
-                    if self.selAnchor == nil then
-                        self.selAnchor = self.cursorPos
-                    end
-                else
-                    self.selAnchor = pos
+                if not isDoubleClick and self._doubleClickTimer > 0 and self._lastClickMouse then
+                    local dx = localMouse[1] - self._lastClickMouse[1]
+                    local dy = localMouse[2] - self._lastClickMouse[2]
+                    isDoubleClick = (dx * dx + dy * dy) <= (DOUBLE_CLICK_MAX_DISTANCE * DOUBLE_CLICK_MAX_DISTANCE)
                 end
 
-                self.cursorPos = pos
-                self:_resetBlink()
-                self._mouseWasDown = true
+                if isDoubleClick then
+                    if not self:_selectWordAtCursor(pos) then
+                        self.selAnchor = nil
+                        self.cursorPos = pos
+                        self:_resetBlink()
+                    end
+                    self._doubleClickTimer = 0
+                    self._lastClickMouse = nil
+                    self._mouseWasDown = false
+                else
+                    if self._shiftHeld then
+                        if self.selAnchor == nil then
+                            self.selAnchor = self.cursorPos
+                        end
+                    else
+                        self.selAnchor = pos
+                    end
+
+                    self.cursorPos = pos
+                    self:_resetBlink()
+                    self._doubleClickTimer = DOUBLE_CLICK_INTERVAL
+                    self._lastClickMouse = { localMouse[1], localMouse[2] }
+                    self._mouseWasDown = true
+                end
             else
                 if self.unfocusOnClickOutside then
                     self:blur()
                 end
                 self._mouseWasDown = false
+                self._doubleClickTimer = 0
+                self._lastClickMouse = nil
             end
 
         elseif ev.type == "MouseButtonUp" and ev.data

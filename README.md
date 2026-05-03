@@ -27,6 +27,7 @@ git submodule add https://github.com/Mofurka/StarboundTextboxInterface Starbound
 - UTF-8 text support
 - Custom canvas-based rendering
 - Cursor navigation and text selection
+- Double click selection
 - Mouse and keyboard interaction
 - Multiline editing
 - Clipboard support (copy / paste / cut)

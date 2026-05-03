@@ -202,6 +202,8 @@ Textbox = {
     _mouseWasDown = false,
     _mouseLeftHeld = false,
     _doubleClickTimer = 0,
+    _clickCount = 0,
+    _mouseDragAnchor = nil,
     _lastClickMouse = nil,
     _shiftHeld = false,
     _ctrlHeld = false,
@@ -803,18 +805,28 @@ function Textbox:_getSelRange()
 end
 
 ---@protected
-function Textbox:_selectWordAtCursor(pos)
+function Textbox:_selectAllText()
+    self.selAnchor = 0
+    self.cursorPos = self.charLen
+    self._cursorAffinity = CURSOR_AFFINITY.backward
+    self:_resetBlink()
+    self:_ensureCursorVisible()
+    self:_invalidateCaret()
+end
+
+---@protected
+function Textbox:_selectTextUnitAtCursor(pos)
     if self.charLen == 0 then
         return false
     end
 
     local charIdx = nil
     local rightChar = pos < self.charLen and utf8.charAt(self.text, pos + 1) or nil
-    if rightChar and isWordChar(rightChar) then
+    if rightChar then
         charIdx = pos + 1
     else
         local leftChar = pos > 0 and utf8.charAt(self.text, pos) or nil
-        if leftChar and isWordChar(leftChar) then
+        if leftChar then
             charIdx = pos
         end
     end
@@ -823,8 +835,29 @@ function Textbox:_selectWordAtCursor(pos)
         return false
     end
 
-    self.selAnchor = self:_wordBoundaryLeft(charIdx)
-    self.cursorPos = self:_wordBoundaryRight(charIdx - 1)
+    local text = self.text
+    local ch = utf8.charAt(text, charIdx)
+    local from = charIdx - 1
+    local to = charIdx
+
+    if isWordChar(ch) then
+        from = self:_wordBoundaryLeft(charIdx)
+        to = self:_wordBoundaryRight(charIdx - 1)
+    elseif isHorizontalSpace(ch) then
+        while from > 0 and isHorizontalSpace(utf8.charAt(text, from)) do
+            from = from - 1
+        end
+        while to < self.charLen and isHorizontalSpace(utf8.charAt(text, to + 1)) do
+            to = to + 1
+        end
+    end
+
+    while to < self.charLen and isHorizontalSpace(utf8.charAt(text, to + 1)) do
+        to = to + 1
+    end
+
+    self.selAnchor = from
+    self.cursorPos = to
     self._cursorAffinity = CURSOR_AFFINITY.backward
     self:_resetBlink()
     self:_ensureCursorVisible()
@@ -879,6 +912,7 @@ function Textbox:_deleteBack()
     end
     self:_splice(self.cursorPos - 1, self.cursorPos)
     self.cursorPos = self.cursorPos - 1
+    self.selAnchor = nil
     self:_onTextChanged(ACTION_TYPES.backspace)
 end
 ---@protected
@@ -891,6 +925,7 @@ function Textbox:_deleteForward()
         return
     end
     self:_splice(self.cursorPos, self.cursorPos + 1)
+    self.selAnchor = nil
     self:_onTextChanged(ACTION_TYPES.delete)
 end
 
@@ -942,6 +977,7 @@ function Textbox:_deleteWordBack()
     if newPos < self.cursorPos then
         self:_splice(newPos, self.cursorPos)
         self.cursorPos = newPos
+        self.selAnchor = nil
         self:_onTextChanged(ACTION_TYPES.backspace)
     end
 end
@@ -957,6 +993,7 @@ function Textbox:_deleteWordForward()
     local newPos = self:_wordBoundaryRight(self.cursorPos)
     if newPos > self.cursorPos then
         self:_splice(self.cursorPos, newPos)
+        self.selAnchor = nil
         self:_onTextChanged(ACTION_TYPES.delete)
     end
 end
@@ -1612,23 +1649,38 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                 if not clickCount and input.mouseDown then
                     clickCount = input.mouseDown("MouseLeft")
                 end
-                clickCount = clickCount or 1
-                local isDoubleClick = clickCount >= 2
 
-                if not isDoubleClick and self._doubleClickTimer > 0 and self._lastClickMouse then
+                local isSameClickSpot = false
+                if self._doubleClickTimer > 0 and self._lastClickMouse then
                     local dx = localMouse[1] - self._lastClickMouse[1]
                     local dy = localMouse[2] - self._lastClickMouse[2]
-                    isDoubleClick = (dx * dx + dy * dy) <= (DOUBLE_CLICK_MAX_DISTANCE * DOUBLE_CLICK_MAX_DISTANCE)
+                    isSameClickSpot = (dx * dx + dy * dy) <= (DOUBLE_CLICK_MAX_DISTANCE * DOUBLE_CLICK_MAX_DISTANCE)
                 end
 
-                if isDoubleClick then
-                    if not self:_selectWordAtCursor(pos) then
+                if clickCount and clickCount >= 2 then
+                    self._clickCount = clickCount
+                elseif isSameClickSpot then
+                    self._clickCount = (self._clickCount or 0) + 1
+                else
+                    self._clickCount = 1
+                end
+
+                if self._clickCount >= 3 then
+                    self:_selectAllText()
+                    self._doubleClickTimer = 0
+                    self._clickCount = 0
+                    self._mouseDragAnchor = nil
+                    self._lastClickMouse = nil
+                    self._mouseWasDown = false
+                elseif self._clickCount >= 2 then
+                    if not self:_selectTextUnitAtCursor(pos) then
                         self.selAnchor = nil
                         self.cursorPos = pos
                         self:_resetBlink()
                     end
-                    self._doubleClickTimer = 0
-                    self._lastClickMouse = nil
+                    self._doubleClickTimer = DOUBLE_CLICK_INTERVAL
+                    self._mouseDragAnchor = nil
+                    self._lastClickMouse = { localMouse[1], localMouse[2] }
                     self._mouseWasDown = false
                 else
                     if self._shiftHeld then
@@ -1636,12 +1688,13 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                             self.selAnchor = self.cursorPos
                         end
                     else
-                        self.selAnchor = pos
+                        self.selAnchor = nil
                     end
 
                     self.cursorPos = pos
                     self:_resetBlink()
                     self._doubleClickTimer = DOUBLE_CLICK_INTERVAL
+                    self._mouseDragAnchor = pos
                     self._lastClickMouse = { localMouse[1], localMouse[2] }
                     self._mouseWasDown = true
                 end
@@ -1651,6 +1704,8 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                 end
                 self._mouseWasDown = false
                 self._doubleClickTimer = 0
+                self._clickCount = 0
+                self._mouseDragAnchor = nil
                 self._lastClickMouse = nil
             end
 
@@ -1658,6 +1713,7 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                 and ev.data.mouseButton == "MouseLeft" then
             self._mouseLeftHeld = false
             self._mouseWasDown = false
+            self._mouseDragAnchor = nil
         end
     end
 
@@ -1668,6 +1724,9 @@ function Textbox:_processMouseEvents(events, mouseScreen)
         if localMouse then
             local pos, dragLi = self:_xyToCursor(localMouse[1], localMouse[2])
             if pos ~= self.cursorPos then
+                if self.selAnchor == nil then
+                    self.selAnchor = self._mouseDragAnchor or self.cursorPos
+                end
                 self.cursorPos = pos
                 self._cursorAffinity = self:_determineClickAffinity(pos, dragLi)
                 self:_resetBlink()

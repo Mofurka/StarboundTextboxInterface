@@ -253,6 +253,7 @@ end
 ---@field onSizeChange fun(newHeight: number[] {width, height})?
 ---@field screenOffset number[]? {x, y} - relative to the widget rect, for example {0, -10} would move the text 10 pixels up from the bottom of the widget
 ---@field unfocusOnClickOutside boolean? - whether the textbox should lose focus when the user clicks outside of it. Default is true.
+---@field textFont string?
 
 ---@public
 ---@param widgetName string can be nil
@@ -278,6 +279,7 @@ function Textbox:setup(widgetName, options)
     inst.caretColor = options.caretColor or CARET_COLOR
     inst._screenOffset = options.screenOffset or inst._screenOffset
     inst.unfocusOnClickOutside = options.unfocusOnClickOutside
+    inst.textFont = options.textFont or "hobo"
     inst._paneFeature = Textbox.findPaneFeature()
 
     if widgetName:find("%.") then
@@ -1956,6 +1958,7 @@ function Textbox:_drawText()
     local lineAdvance = self:_getLineAdvance()
     local fs, color = self.fontSize, self.textColor
     local vInset = self:_getVerticalInset(metrics)
+    local textFont = self.textFont
 
     local drawParams = {
         position = { PAD, 0 },
@@ -1979,7 +1982,7 @@ function Textbox:_drawText()
                     end
                     drawParams.position[2] = top - vInset
                     debugMessage("DRAW LINE %s Y: %s", sb.print(li), sb.print(top - vInset))
-                    canvas:drawText(lineText, drawParams, fs, color)
+                    canvas:drawText(lineText, drawParams, fs, color, nil, textFont)
 
                 end
             end
@@ -2351,6 +2354,24 @@ end
 ---@return number
 function Textbox:getFontSize()
     return self.fontSize
+end
+
+---@public
+---@param font string
+function Textbox:setFont(font)
+    if not font or font == "" then return end
+    self.textFont = font
+
+    self:_invalidateAll()
+    self:_reflow()
+    self:_updateAutoHeight()
+    self:_ensureCursorVisible()
+end
+
+---@public
+---@return string
+function Textbox:getFont()
+    return self.textFont
 end
 
 ---@public

@@ -84,6 +84,7 @@ function Combobox:_new(widgetName, onSelect, values, defaultValue, onClose, onOp
     end
     obj.sortKeys = sortKeys
     obj.keys = sortKeys and util.orderedKeys(obj.values) or util.keys(obj.values)
+    obj.destroyed = false
 
     setmetatable(obj, self)
     self.__index = self
@@ -257,6 +258,9 @@ function Combobox:bind(widgetName, values, onSelect, options)
     local wrapperFullPath = widgetPath(parentFullWidgetName, wrapperName)
 
     local cb = self:_new(wrapperFullPath, onSelect, values, options.defaultValue, options.onClose, options.onOpen, options.sortKeys)
+    cb.wrapperName = wrapperName
+    cb.parentWidgetName = parentWidgetName
+    comboboxes[wrapperFullPath] = cb
 
     -- Create list item and register the callbacks
     widget.registerMemberCallback(wrapperFullPath, "comboboxSelect", function()
@@ -350,6 +354,38 @@ function Combobox:setSelected(value)
     widget.setListSelected(widgetPath(self.widgetName, self.li, WIDGET_NAME.layout, WIDGET_NAME.scrollArea, WIDGET_NAME.list), self.listMap[value] or "")
 end
 
-function Combobox:destory()
-    
+function Combobox:destroy()
+    if self.destroyed then
+        return
+    end
+
+    pcall(widget.setVisible, self.widgetName, false)
+    if self.onClose then
+        pcall(self.onClose)
+    end
+
+    if self.parentWidgetName then
+        pcall(widget.removeChild, self.parentWidgetName, self.wrapperName)
+    else
+        pcall(pane.removeWidget, self.wrapperName)
+    end
+
+    comboboxes[self.widgetName] = nil
+    self.values = {}
+    self.keys = {}
+    self.listMap = {}
+    self.onSelect = nil
+    self.onClose = nil
+    self.onOpen = nil
+    self.li = nil
+    self.destroyed = true
+end
+
+function Combobox.uninit()
+    local activeComboboxes = comboboxes
+    comboboxes = {}
+
+    for _, cb in pairs(activeComboboxes) do
+        cb:destroy()
+    end
 end

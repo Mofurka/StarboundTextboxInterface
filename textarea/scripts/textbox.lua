@@ -1968,7 +1968,7 @@ function Textbox:_drawText()
 
     if self.charLen == 0 and self.hint and self.hint ~= "" then
         drawParams.position[2] = baseY - vInset
-        canvas:drawText(self.hint, drawParams, fs, self.hintColor)
+        canvas:drawText(self.hint, drawParams, fs, self.hintColor, nil, textFont)
     else
         local fromLi, toLi = self:_getVisibleLineRange()
         for li = fromLi, toLi do

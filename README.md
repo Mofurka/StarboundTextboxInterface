@@ -67,7 +67,8 @@ local textbox = Textbox:setup("widgetName", {
     maxHeight = 120, -- Turns on the dynamic height functionality
     onSizeChange = function(newSize)
         sb.logInfo("Textbox changed size")
-    end
+    end,
+    textFont = "hobo"
 })
 ```
 
@@ -265,6 +266,18 @@ Set text color as `{r, g, b, a}`.
 #### `nil` textbox:setHintColor(`number[]` color)
 
 Set hint color as `{r, g, b, a}`.
+
+---
+
+#### `nil` textbox:setFont(`string` font)
+
+Set the new font type.
+
+---
+
+#### `string` textbox:getFont()
+
+Get current font.
 
 ---
 

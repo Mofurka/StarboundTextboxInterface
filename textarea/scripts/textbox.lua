@@ -435,6 +435,7 @@ function Textbox:_setupMeasureLabel()
         color = "#00000000",
         fontSize = self.fontSize,
         value = "",
+        font = self.textFont
     }, path)
     self.measureLabelPath = path
 end
@@ -2362,6 +2363,17 @@ function Textbox:setFont(font)
     if not font or font == "" then return end
     self.textFont = font
 
+    self:_destroyMeasureLabel()
+    self:_setupMeasureLabel()
+
+    local metrics = self:_measureFontMetrics()
+
+    if not self._lineHeightExplicit then
+        self.lineHeight = self:_resolveAutoLineHeight(metrics)
+    else
+        self.lineHeight = math.floor(self.lineHeight + 0.5)
+    end
+    
     self:_invalidateAll()
     self:_reflow()
     self:_updateAutoHeight()

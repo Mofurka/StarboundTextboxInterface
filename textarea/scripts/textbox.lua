@@ -49,6 +49,7 @@ end
 
 local DEBUG = false
 local PAD = 2
+local MAX_WRAP_WIDTH = 2000  -- Prevent caret rendering issues with extremely wide textboxes
 local CARET_BLINK_INTERVAL = 0.5
 local CARET_COLOR = { 0, 0, 0, 255 }
 local SELECTION_COLOR = { 50, 100, 200, 80 }
@@ -2071,7 +2072,7 @@ function Textbox:_updateAutoHeight()
 
         local newRect = { self.rect[1], self.rect[2], self.rect[3], newHeight }
 
-        local width = newRect[3]
+        local width = newRect[3] - PAD
         local height = newRect[4]
 
         -- layout

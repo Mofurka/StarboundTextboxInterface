@@ -186,11 +186,11 @@ function AnimatedWidget:scale(oldValue, newValue, duration, scalingCenter)
 end
 
 function AnimatedWidget:setSize(newSize, duration)
-  return SetSizePromise:new{ name = self.name, startSize = widget.getSize(self.name), endSize = newSize, duration = duration}
+  return SetSizePromise:new{ name = self.name, startSize = widget.getSize(self.name) or {0, 0}, endSize = newSize, duration = duration}
 end
 
 function AnimatedWidget:setPaneSize(newSize, duration)
-  return SetPaneSizePromise:new{ startSize = pane.getSize(), endSize = newSize, duration = duration}
+  return SetPaneSizePromise:new{ startSize = pane.getSize() or {0, 0}, endSize = newSize, duration = duration}
 end
 
 function AnimatedWidget:setText(text, duration)

@@ -329,6 +329,12 @@ Get current max height of the textbox.
 
 ---
 
+#### `void` textbox:setSize(`number[]` size)
+
+Sets current textbox size.
+
+---
+
 ### Module lifecycle hooks
 
 #### `nil` Textbox.init()

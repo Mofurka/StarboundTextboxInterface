@@ -2432,6 +2432,35 @@ function Textbox:getMaxHeight()
     return self.maxHeight
 end
 
+---@public
+---@param size number[] {width, height}
+function Textbox:setSize(size)
+    if not size then
+        return
+    end
+
+    local width = math.max(1, math.floor((size[1] or self.rect[3]) + 0.5))
+    local height = math.max(1, math.floor((size[2] or self.rect[4]) + 0.5))
+
+    if self.rect[3] == width and self.rect[4] == height then
+        return
+    end
+
+    self.currentHeight = height
+    widget.setSize(self.path, { width, height })
+    widget.setSize(self.textCanvasPath, { width, height })
+    widget.setSize(self.carretCanvasPath, { width, height })
+    widget.setSize(self.scrollAreaPath, { width + 20, height })
+
+    self.rect = { 0, 0, width, height }
+    self.wrapWidth = self:_getWrapWidth()
+
+    self:_reflow()
+    self:_updateAutoHeight()
+    self:_invalidateAll()
+    self:_ensureCursorVisible()
+end
+
 -- ─────────────────────────── lifecyle ────────────────────────────────
 
 function Textbox.init()

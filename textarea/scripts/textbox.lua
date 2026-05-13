@@ -49,7 +49,6 @@ end
 
 local DEBUG = false
 local PAD = 2
-local MAX_WRAP_WIDTH = 2000  -- Prevent caret rendering issues with extremely wide textboxes
 local CARET_BLINK_INTERVAL = 0.5
 local CARET_COLOR = { 0, 0, 0, 255 }
 local SELECTION_COLOR = { 50, 100, 200, 80 }
@@ -428,7 +427,7 @@ function Textbox:_setupMeasureLabel()
     local path = WIDGET_SHORTS.measureLabel .. self.uuid
     pane.addWidget({
         type = "label",
-        wrapWidth = 500,
+        wrapWidth = 1000,
         position = { -1000, -1000 },
         visible = false,
         hAnchor = "left",
@@ -555,8 +554,7 @@ end
 
 ---@protected
 function Textbox:_getWrapWidth()
-    local sz = self.textCanvas:size()
-    return math.max(0, sz[1] - PAD * 2)
+    return math.max(0, self.rect[3] - PAD * 2)
 end
 
 ---@protected

@@ -817,6 +817,21 @@ function Textbox:_selectAllText()
 end
 
 ---@protected
+function Textbox:_selectCurrentLine(lineIdx)
+    if not lineIdx or lineIdx < 1 or lineIdx > #self.lines then
+        return
+    end
+    
+    local line = self.lines[lineIdx]
+    self.selAnchor = line.startIdx - 1
+    self.cursorPos = line.endIdx
+    self._cursorAffinity = CURSOR_AFFINITY.backward
+    self:_resetBlink()
+    self:_ensureCursorVisible()
+    self:_invalidateCaret()
+end
+
+---@protected
 function Textbox:_selectTextUnitAtCursor(pos)
     if self.charLen == 0 then
         return false
@@ -1667,12 +1682,18 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                     self._clickCount = 1
                 end
 
-                if self._clickCount >= 3 then
+                if self._clickCount >= 4 then
                     self:_selectAllText()
                     self._doubleClickTimer = 0
                     self._clickCount = 0
                     self._mouseDragAnchor = nil
                     self._lastClickMouse = nil
+                    self._mouseWasDown = false
+                elseif self._clickCount >= 3 then
+                    self:_selectCurrentLine(clickedLi)
+                    self._doubleClickTimer = DOUBLE_CLICK_INTERVAL
+                    self._mouseDragAnchor = nil
+                    self._lastClickMouse = { localMouse[1], localMouse[2] }
                     self._mouseWasDown = false
                 elseif self._clickCount >= 2 then
                     if not self:_selectTextUnitAtCursor(pos) then

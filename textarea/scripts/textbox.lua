@@ -554,7 +554,7 @@ end
 
 ---@protected
 function Textbox:_getWrapWidth()
-    return math.max(0, self.rect[3] - PAD * 2)
+    return math.max(0, self.rect[3] - PAD * 4)
 end
 
 ---@protected

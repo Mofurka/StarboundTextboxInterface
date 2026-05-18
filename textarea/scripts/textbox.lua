@@ -1662,10 +1662,6 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                 self:focus()
                 local pos, clickedLi = self:_xyToCursor(localMouse[1], localMouse[2])
                 self._cursorAffinity = self:_determineClickAffinity(pos, clickedLi)
-                local clickCount = ev.data.count or ev.data.clickCount or ev.data.clicks
-                if not clickCount and input.mouseDown then
-                    clickCount = input.mouseDown("MouseLeft")
-                end
 
                 local isSameClickSpot = false
                 if self._doubleClickTimer > 0 and self._lastClickMouse then
@@ -1674,9 +1670,7 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                     isSameClickSpot = (dx * dx + dy * dy) <= (DOUBLE_CLICK_MAX_DISTANCE * DOUBLE_CLICK_MAX_DISTANCE)
                 end
 
-                if clickCount and clickCount >= 2 then
-                    self._clickCount = clickCount
-                elseif isSameClickSpot then
+                if isSameClickSpot then
                     self._clickCount = (self._clickCount or 0) + 1
                 else
                     self._clickCount = 1

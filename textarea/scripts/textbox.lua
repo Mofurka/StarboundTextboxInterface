@@ -209,6 +209,7 @@ Textbox = {
     _ctrlHeld = false,
     _heldKey = nil,
     _heldTimer = 0,
+    _heldTimerIntervalsProcessed = 0,
     _ignoreInputFrame = false,
     _cursorAffinity = CURSOR_AFFINITY.forward,
     _lineHeightExplicit = nil,
@@ -1385,6 +1386,7 @@ function Textbox:_processInput(dt, events, mousePos)
             if key == self._heldKey then
                 self._heldKey = nil
                 self._heldTimer = 0
+                self._heldTimerIntervalsProcessed = 0
             end
         end
     end
@@ -1398,7 +1400,8 @@ function Textbox:_processInput(dt, events, mousePos)
         self._heldTimer = self._heldTimer + dt
         if self._heldTimer >= KEY_REPEAT_DELAY then
             local elapsed = self._heldTimer - KEY_REPEAT_DELAY
-            if math.floor(elapsed / KEY_REPEAT_INTERVAL) > 0 then
+            local intervalsElapsed = math.floor(elapsed / KEY_REPEAT_INTERVAL)
+            if intervalsElapsed > self._heldTimerIntervalsProcessed then
                 local mods = {}
                 if self._shiftHeld then
                     table.insert(mods, KEYS.LShift)
@@ -1416,7 +1419,7 @@ function Textbox:_processInput(dt, events, mousePos)
                     }
                 }
                 self:_processKeys({ fakeEvent })
-                self._heldTimer = KEY_REPEAT_DELAY + (elapsed % KEY_REPEAT_INTERVAL)
+                self._heldTimerIntervalsProcessed = intervalsElapsed
             end
         end
     end

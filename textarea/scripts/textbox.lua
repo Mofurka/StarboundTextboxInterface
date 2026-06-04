@@ -1356,6 +1356,24 @@ function Textbox:_processInput(dt, events, mousePos)
         self:_invalidateCaret()
     end
 
+    for _, ev in ipairs(events) do
+        local data = ev.data
+        if ev.type == "KeyUp" and data then
+            local key = data.key
+            if key == KEYS.LShift or key == KEYS.RShift then
+                self._shiftHeld = false
+            end
+            if key == KEYS.LCtrl or key == KEYS.RCtrl then
+                self._ctrlHeld = false
+            end
+            if key == self._heldKey then
+                self._heldKey = nil
+                self._heldTimer = 0
+                self._heldTimerIntervalsProcessed = 0
+            end
+        end
+    end
+
     if self._ignoreInputFrame then
         self._ignoreInputFrame = false
         return
@@ -1374,19 +1392,6 @@ function Textbox:_processInput(dt, events, mousePos)
             if REPEATABLE_KEYS[key] then
                 self._heldKey = key
                 self._heldTimer = 0
-            end
-        elseif ev.type == "KeyUp" and data then
-            local key = data.key
-            if key == KEYS.LShift or key == KEYS.RShift then
-                self._shiftHeld = false
-            end
-            if key == KEYS.LCtrl or key == KEYS.RCtrl then
-                self._ctrlHeld = false
-            end
-            if key == self._heldKey then
-                self._heldKey = nil
-                self._heldTimer = 0
-                self._heldTimerIntervalsProcessed = 0
             end
         end
     end

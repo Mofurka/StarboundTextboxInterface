@@ -58,6 +58,7 @@ local DOUBLE_CLICK_INTERVAL = 0.4
 local DOUBLE_CLICK_MAX_DISTANCE = 4
 local FAKE_TEXTBOX_COROUTINE_THRESHOLD = 60000
 local FAKE_TEXTBOX_COROUTINE_CHUNK_SIZE = 30000
+local EMPTY_LINE_HIGHLIGHT_WIDTH = 2
 
 local REPEATABLE_KEYS = {
     Backspace = true,
@@ -2049,9 +2050,12 @@ function Textbox:_drawCaret()
                 local x1 = li == fromLi and (PAD + fromX) or PAD
                 local x2 = li == toLi and (PAD + toX) or (PAD + line.width)
 
-                if x2 > x1 then
-                    canvas:drawRect({ x1, textBot, x2, textTop }, self.selectionColor)
+                -- Ensure empty lines also get highlighted by drawing at least a minimal width
+                if x2 <= x1 then
+                    x2 = x1 + EMPTY_LINE_HIGHLIGHT_WIDTH
                 end
+
+                canvas:drawRect({ x1, textBot, x2, textTop }, self.selectionColor)
             end
         end
     end

@@ -1358,7 +1358,19 @@ function Textbox:_processInput(dt, events, mousePos)
 
     for _, ev in ipairs(events) do
         local data = ev.data
-        if ev.type == "KeyUp" and data then
+        if ev.type == "KeyDown" and data then
+            local key = data.key
+            if key == KEYS.LShift or key == KEYS.RShift then
+                self._shiftHeld = true
+            end
+            if key == KEYS.LCtrl or key == KEYS.RCtrl then
+                self._ctrlHeld = true
+            end
+            if REPEATABLE_KEYS[key] then
+                self._heldKey = key
+                self._heldTimer = 0
+            end
+        elseif ev.type == "KeyUp" and data then
             local key = data.key
             if key == KEYS.LShift or key == KEYS.RShift then
                 self._shiftHeld = false
@@ -1379,22 +1391,6 @@ function Textbox:_processInput(dt, events, mousePos)
         return
     end
 
-    for _, ev in ipairs(events) do
-        local data = ev.data
-        if ev.type == "KeyDown" and data then
-            local key = data.key
-            if key == KEYS.LShift or key == KEYS.RShift then
-                self._shiftHeld = true
-            end
-            if key == KEYS.LCtrl or key == KEYS.RCtrl then
-                self._ctrlHeld = true
-            end
-            if REPEATABLE_KEYS[key] then
-                self._heldKey = key
-                self._heldTimer = 0
-            end
-        end
-    end
 
     self:_processMouseEvents(events, mousePos)
     if not self.focused then

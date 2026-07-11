@@ -106,12 +106,16 @@ local ACTION_TYPES = {
     other = "other",
 }
 
-local function debugMessage(msg, ...)
-    if DEBUG then
-        sb.logInfo("[tbx.lua] " .. msg, ...)
-    end
+local function logInfo(msg, ...)
+    sb.logInfo("[tbx.lua] " .. msg, ...)
 end
 
+---@param key string
+---@param formatString string
+---@param formatValues any
+local function logMap(key, formatString, formatValues)
+    sb.setLogMap("^yellow;[tbx.lua]^reset; " .. key, formatString, formatValues)
+end
 -- ─────────────────────────── lifecycle ─────────────────────────────────
 
 local oldInit, oldUpdate, oldUninit = init, update, uninit
@@ -375,8 +379,9 @@ function Textbox:setup(widgetName, options)
     inst.scrollY = 0
     inst:_invalidateAll()
     inst:_saveInitialState()
-
-    debugMessage("Textbox setup complete: %s", sb.print(inst))
+    if DEBUG then
+        logInfo("Textbox setup complete: %s", sb.print(inst))
+    end
     activeTextboxes[inst.uuid] = inst
     return inst
 end
@@ -823,7 +828,7 @@ function Textbox:_selectCurrentLine(lineIdx)
     if not lineIdx or lineIdx < 1 or lineIdx > #self.lines then
         return
     end
-    
+
     local line = self.lines[lineIdx]
     self.selAnchor = line.startIdx - 1
     self.cursorPos = line.endIdx
@@ -1066,15 +1071,15 @@ function Textbox:_pushUndoState(actionType, currentTime)
     local currentState = self:_saveState()
 
     if not self._lastSavedState or
-       currentState.text ~= self._lastSavedState.text then
-        
+            currentState.text ~= self._lastSavedState.text then
+
         -- Check if we should group this action with the previous one
         local shouldGroup = false
         if self._lastActionType and actionType then
             -- Group continuous insertions or deletions
             if (self._lastActionType == ACTION_TYPES.insert and actionType == ACTION_TYPES.insert) or
-               (self._lastActionType == ACTION_TYPES.backspace and actionType == ACTION_TYPES.backspace) or
-               (self._lastActionType == ACTION_TYPES.delete and actionType == ACTION_TYPES.delete) then
+                    (self._lastActionType == ACTION_TYPES.backspace and actionType == ACTION_TYPES.backspace) or
+                    (self._lastActionType == ACTION_TYPES.delete and actionType == ACTION_TYPES.delete) then
                 -- Only group if time threshold hasn't been exceeded
                 if (currentTime - self._lastActionTime) < self._actionGroupTimeThreshold then
                     shouldGroup = true
@@ -1103,7 +1108,7 @@ function Textbox:_undo()
     table.insert(self.redoHistory, self._lastSavedState)
     self._lastSavedState = table.remove(self.undoHistory)
     self:_restoreState(self._lastSavedState, true)
-    
+
     self._lastActionType = nil
     self._lastActionTime = 0
 end
@@ -1117,7 +1122,7 @@ function Textbox:_redo()
     table.insert(self.undoHistory, self._lastSavedState)
     self._lastSavedState = table.remove(self.redoHistory)
     self:_restoreState(self._lastSavedState, true)
-    
+
     self._lastActionType = nil
     self._lastActionTime = 0
 end
@@ -1392,7 +1397,6 @@ function Textbox:_processInput(dt, events, mousePos)
         return
     end
 
-
     self:_processMouseEvents(events, mousePos)
     if not self.focused then
         return
@@ -1483,7 +1487,9 @@ function Textbox:_getChildChainOffset()
     end
 
     local parts = self:_splitWidgetPath(self.parrentWidgetPath)
-    debugMessage("Widget path parts: %s", sb.printJson(parts))
+    if DEBUG then
+        logInfo("Widget path parts: %s", sb.printJson(parts))
+    end
     if #parts == 0 then
         self._firstParent = self.parrentWidgetPath
         self._childrenRect = { 0, 0 }
@@ -1495,12 +1501,13 @@ function Textbox:_getChildChainOffset()
     local offset = { 0, 0 }
     local currentPath = parts[1]
 
-
     for i = 2, #parts do
         currentPath = currentPath .. "." .. parts[i]
         local childPos = widget.getPosition(currentPath) or { 0, 0 }
         offset = vec2.add(offset, childPos)
-        debugMessage("Child chain part %s (%s) pos: %s", tostring(i), currentPath, sb.printJson(childPos))
+        if DEBUG then
+            logInfo("Child chain part %s (%s) pos: %s", tostring(i), currentPath, sb.printJson(childPos))
+        end
     end
 
     self._childrenRect = offset
@@ -1622,6 +1629,17 @@ function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
         localMouse[1] = clamp(localMouse[1], 0, sz[1])
         localMouse[2] = clamp(localMouse[2], 0, sz[2])
     end
+
+    if DEBUG then
+        logMap("Textbox:_screenToLocalMouse" .. self.uuid, "%s", sb.printJson({
+            mouseScreen = mouseScreen,
+            widgetRect = widgetRect,
+            localMouse = localMouse,
+            canvasMouse = self.carretCanvas and self.carretCanvas:mousePosition(),
+            scale = scale
+        }))
+    end
+
     return localMouse, widgetRect
 end
 
@@ -1853,16 +1871,22 @@ function Textbox:_resumeFakeTextboxPasteCoroutine()
     return true
 end
 
-
-
 local KEY_DISPATCH = {
     ---@param self Textbox
     [KEYS.Backspace] = function(self, ctrl, shift)
-        if ctrl then self:_deleteWordBack() else self:_deleteBack() end
+        if ctrl then
+            self:_deleteWordBack()
+        else
+            self:_deleteBack()
+        end
     end,
     ---@param self Textbox
     [KEYS.Delete] = function(self, ctrl, shift)
-        if ctrl then self:_deleteWordForward() else self:_deleteForward() end
+        if ctrl then
+            self:_deleteWordForward()
+        else
+            self:_deleteForward()
+        end
     end,
     ---@param self Textbox
     [KEYS.Return] = function(self, ctrl, shift)
@@ -1874,7 +1898,9 @@ local KEY_DISPATCH = {
     end,
     ---@param self Textbox
     [KEYS.Escape] = function(self, ctrl, shift)
-        if self.onEscapeKey then self:onEscapeKey() end
+        if self.onEscapeKey then
+            self:onEscapeKey()
+        end
     end,
     ---@param self Textbox
     [KEYS.Tab] = function(self, ctrl, shift)
@@ -1882,11 +1908,19 @@ local KEY_DISPATCH = {
     end,
     ---@param self Textbox
     [KEYS.Left] = function(self, ctrl, shift)
-        if ctrl then self:_moveCursorWordLeft(shift) else self:_moveCursorLeft(shift) end
+        if ctrl then
+            self:_moveCursorWordLeft(shift)
+        else
+            self:_moveCursorLeft(shift)
+        end
     end,
     ---@param self Textbox
     [KEYS.Right] = function(self, ctrl, shift)
-        if ctrl then self:_moveCursorWordRight(shift) else self:_moveCursorRight(shift) end
+        if ctrl then
+            self:_moveCursorWordRight(shift)
+        else
+            self:_moveCursorRight(shift)
+        end
     end,
     ---@param self Textbox
     [KEYS.Up] = function(self, ctrl, shift)
@@ -1918,20 +1952,28 @@ local KEY_DISPATCH = {
     end,
     ---@param self Textbox
     [KEYS.A] = function(self, ctrl, shift)
-        if not ctrl then return end
+        if not ctrl then
+            return
+        end
         self.selAnchor = 0
         self.cursorPos = self.charLen
         self:_resetBlink()
     end,
     ---@param self Textbox
     [KEYS.C] = function(self, ctrl, shift)
-        if not ctrl then return end
+        if not ctrl then
+            return
+        end
         local sel = self:getSelectedText()
-        if sel ~= "" then clipboard.setText(sel) end
+        if sel ~= "" then
+            clipboard.setText(sel)
+        end
     end,
     ---@param self Textbox
     [KEYS.X] = function(self, ctrl, shift)
-        if not ctrl then return end
+        if not ctrl then
+            return
+        end
         local sel = self:getSelectedText()
         if sel ~= "" then
             clipboard.setText(sel)
@@ -1941,24 +1983,31 @@ local KEY_DISPATCH = {
     end,
     ---@param self Textbox
     [KEYS.Z] = function(self, ctrl, shift)
-        if not ctrl then return end
-        if shift then self:_redo() else self:_undo() end
+        if not ctrl then
+            return
+        end
+        if shift then
+            self:_redo()
+        else
+            self:_undo()
+        end
     end,
     ---@param self Textbox
     [KEYS.Y] = function(self, ctrl, shift)
-        if ctrl then self:_redo() end
+        if ctrl then
+            self:_redo()
+        end
     end,
 }
-
 
 ---@protected
 function Textbox:_processKeys(events)
     for _, ev in ipairs(events) do
         if ev.type == "KeyDown" and ev.data then
-            local key    = ev.data.key
-            local mods   = ev.data.mods or {}
-            local shift  = hasMod(mods, KEYS.LShift) or hasMod(mods, KEYS.RShift)
-            local ctrl   = hasMod(mods, KEYS.LCtrl)  or hasMod(mods, KEYS.RCtrl)
+            local key = ev.data.key
+            local mods = ev.data.mods or {}
+            local shift = hasMod(mods, KEYS.LShift) or hasMod(mods, KEYS.RShift)
+            local ctrl = hasMod(mods, KEYS.LCtrl) or hasMod(mods, KEYS.RCtrl)
 
             local handler = KEY_DISPATCH[key]
             if handler then
@@ -2006,7 +2055,9 @@ function Textbox:_drawText()
                         lineText = lineText:sub(1, -2)
                     end
                     drawParams.position[2] = top - vInset
-                    debugMessage("DRAW LINE %s Y: %s", sb.print(li), sb.print(top - vInset))
+                    if DEBUG then
+                        logInfo("DRAW LINE %s Y: %s", sb.print(li), sb.print(top - vInset))
+                    end
                     canvas:drawText(lineText, drawParams, fs, color, nil, textFont)
 
                 end
@@ -2387,7 +2438,9 @@ end
 ---@public
 ---@param font string
 function Textbox:setFont(font)
-    if not font or font == "" then return end
+    if not font or font == "" then
+        return
+    end
     self.textFont = font
 
     self:_destroyMeasureLabel()
@@ -2400,7 +2453,7 @@ function Textbox:setFont(font)
     else
         self.lineHeight = math.floor(self.lineHeight + 0.5)
     end
-    
+
     self:_invalidateAll()
     self:_reflow()
     self:_updateAutoHeight()

@@ -331,7 +331,7 @@ function Textbox:setup(widgetName, options)
     -- Carret canvas
     widget.addChild(lytPath, {
         type = "canvas", rect = canvasRect, zlevel = 3,
-        captureMouseEvents = true, captureKeyboardEvents = false,
+        captureMouseEvents = false, captureKeyboardEvents = false,
     }, WIDGET_SHORTS.carretCanvas)
     inst.carretCanvasPath = lytPath .. dotWidget(WIDGET_SHORTS.carretCanvas)
 
@@ -1663,6 +1663,11 @@ function Textbox:_processMouseEvents(events, mouseScreen)
             self._mouseLeftHeld = true
 
             local hit, localMouse = self:_getMouseHit(mouseScreen)
+
+            if hit and not widget.hasFocus(self.carretCanvasPath) then
+                hit = false
+            end
+
             if hit then
                 self:focus()
                 local pos, clickedLi = self:_xyToCursor(localMouse[1], localMouse[2])

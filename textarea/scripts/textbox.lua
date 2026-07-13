@@ -220,6 +220,9 @@ Textbox = {
     _lineHeightExplicit = nil,
     _fakeTextboxPasteCoroutine = nil,
 
+    -- TODO(nightly): temporary shift +enter anti dupe \n.
+    _fakeInsertedNewline = false,
+
 
     -- Global to local cords
     _screenOffset = { 0, 0 },
@@ -1355,6 +1358,8 @@ end
 function Textbox:_processInput(dt, events, mousePos)
     self.caretTimer = self.caretTimer + dt
     self._doubleClickTimer = math.max(0, (self._doubleClickTimer or 0) - dt)
+    -- TODO(nightly): reset the shif + enter anidupe flag each frame.
+    self._fakeInsertedNewline = false
 
     if self.caretTimer >= CARET_BLINK_INTERVAL then
         self.caretTimer = self.caretTimer - CARET_BLINK_INTERVAL
@@ -1796,6 +1801,11 @@ function Textbox:_pollFakeTextbox()
     if txt and txt ~= "" then
         widget.setText(self.fakeTextbox, "")
 
+        -- TODO(nightly): flag that the faketbx already caried a newline
+        if txt:find("\n", 1, true) then
+            self._fakeInsertedNewline = true
+        end
+
         if utf8.len(txt) > FAKE_TEXTBOX_COROUTINE_THRESHOLD then
             self:_startFakeTextboxPasteCoroutine(txt)
             self:_resumeFakeTextboxPasteCoroutine()
@@ -1891,7 +1901,10 @@ local KEY_DISPATCH = {
     ---@param self Textbox
     [KEYS.Return] = function(self, ctrl, shift)
         if shift then
-            self:_insertText("\n")
+            -- TODO(osb-nightly): on nightly OSB the fakeTextbox already inserted
+            if not self._fakeInsertedNewline then
+                self:_insertText("\n")
+            end
         elseif self.onEnterKey then
             self.onEnterKey()
         end

@@ -107,8 +107,13 @@ end
 
 --- Bind a combobox to a button widget
 ---@param widgetName string - The name of the button widget to bind the combobox to
----@param values table - A table of values to populate the combobox with (key-value pairs)
----@param onSelect function - A function to call when an item is selected (receives value and name)
+---@param values table - A table of values to populate the combobox with. Can be:
+---   - A list of strings: `{"option1", "option2"}`
+---   - A table of key-value pairs: `{key1 = "display1", key2 = "display2"}`
+---   - A table of objects with name and data: `{key1 = {name = "display1", data = {...}}, ...}`
+---     The `name` field is mandatory and will be displayed. The `data` object will be merged with
+---     the widget data when the item is selected and returned to the onSelect callback.
+---@param onSelect function - A function to call when an item is selected (receives data and displayName)
 ---@param options ComboboxOptions - Optional settings for the combobox
 ---@return Combobox
 function Combobox:bind(widgetName, values, onSelect, options)
@@ -133,7 +138,12 @@ function Combobox:bind(widgetName, values, onSelect, options)
     -- Reformat values to a table if it's an array
     for k, v in ipairs(values or {}) do
         values[k] = nil
-        values[v or k] = v
+        -- If v is an object with a name field, use it as-is; otherwise wrap it as a simple string value
+        if type(v) == "table" and v.name then
+            values[v.name] = v
+        else
+            values[v or k] = v
+        end
     end
 
     local backgroundImage = options.background or (filterEnabled and DEFAULT_SCHEMA.backgroundFilter or DEFAULT_SCHEMA.background)
@@ -170,11 +180,13 @@ function Combobox:bind(widgetName, values, onSelect, options)
                             listTemplate = {
                                 background = {
                                     type = "image",
-                                    file = options.listSchema.listUnselected
+                                    file = options.listSchema.listUnselected,
+                                    mouseTransparent = true
                                 },
                                 option = {
                                     type = "label",
-                                    position = options.listSchema.textOffset
+                                    position = options.listSchema.textOffset,
+                                    mouseTransparent = true
                                 }
                             }
                         }
@@ -268,11 +280,11 @@ function Combobox:bind(widgetName, values, onSelect, options)
         local innerListPath = widgetPath(wrapperFullPath, cb.li, WIDGET_NAME.layout, WIDGET_NAME.scrollArea, WIDGET_NAME.list)
         local li = widget.getListSelected(innerListPath)
         if li then
+            local itemData = widget.getData(widgetPath(innerListPath, li))
+            local displayText = widget.getText(widgetPath(innerListPath, li, "option"))
+  
             if onSelect then
-                cb.onSelect(
-                    widget.getData(widgetPath(innerListPath, li)), 
-                    widget.getText(widgetPath(innerListPath, li, "option"))
-                )
+                cb.onSelect(displayText, itemData)
             end
             if options.closeOnSelect then
                 cb:close()
@@ -305,17 +317,32 @@ function Combobox:fillValues(searchText, defaultValue)
 
     for _, name in ipairs(self.keys) do
         local value = self.values[name]
-        if not searchText or name:lower():find(searchText:lower(), nil, true) then
+        local displayName = name
+        local additionalData = nil
+        
+        -- Handle object values with name and data fields
+        if type(value) == "table" and value.name then
+            displayName = value.name
+            additionalData = value.data or {}
+        end
+        
+        if not searchText or displayName:lower():find(searchText:lower(), nil, true) then
 
             local li = widget.addListItem(listPath)
-            widget.setText(widgetPath(listPath, li, "option"), value)
-            widget.setData(widgetPath(listPath, li), name)
+            widget.setText(widgetPath(listPath, li, "option"), displayName)
+            
+            -- Store both the name and any additional data
+            local itemData = {name = name}
+            if additionalData then
+                itemData = sb.jsonMerge(additionalData, widget.getData(widgetPath(listPath, li)))
+            end
+            widget.setData(widgetPath(listPath, li), itemData)
 
-            if defaultValue and value == defaultValue then
+            if defaultValue and displayName == defaultValue then
                 widget.setListSelected(widgetPath(listPath, li))
             end
 
-            self.listMap[value] = li
+            self.listMap[displayName] = li
         end
     end
 end

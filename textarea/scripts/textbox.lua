@@ -4,7 +4,7 @@
 --- Пожалуста, если вы используете или изменяете этот код, указывайте авторство, спасибо!
 require("/scripts/vec2.lua")
 require("/scripts/rect.lua")
-require("/interface/StarboundTextboxInterface/scipts/utf8/utf8.lua")
+require("/interface/StarboundTextboxInterface/scripts/utf8/utf8.lua")
 
 -- ─────────────────────────── modules ────────────────────────────
 
@@ -31,7 +31,7 @@ end
 
 local WIDGET_SHORTS = {
     textCanvas = "_",
-    carretCanvas = "__",
+    caretCanvas = "__",
     fakeTextbox = "___",
     scrollArea = "____",
     lyt = "_", -- this comes with uuid, so it won't conflict between instances
@@ -56,8 +56,12 @@ local KEY_REPEAT_DELAY = 0.5
 local KEY_REPEAT_INTERVAL = 0.05
 local DOUBLE_CLICK_INTERVAL = 0.4
 local DOUBLE_CLICK_MAX_DISTANCE = 4
+
 local FAKE_TEXTBOX_COROUTINE_THRESHOLD = 60000
-local FAKE_TEXTBOX_COROUTINE_CHUNK_SIZE = 30000
+local REFLOW_YIELD_INTERVAL = 2000
+local INCREMENTAL_REFLOW_MIN = 4000
+local INCREMENTAL_REFLOW_MAX_SPAN = 20000
+local MAX_SYNC_REFLOW_CHARS = 30000
 local EMPTY_LINE_HIGHLIGHT_WIDTH = 2
 
 local REPEATABLE_KEYS = {
@@ -146,12 +150,12 @@ end
 ---@class Textbox
 Textbox = {
     rect = nil,
-    parrentWidgetPath = nil,
+    parentWidgetPath = nil,
     path = nil,
     textCanvas = nil,
     textCanvasPath = nil,
-    carretCanvas = nil,
-    carretCanvasPath = nil,
+    caretCanvas = nil,
+    caretCanvasPath = nil,
     fakeTextbox = nil,
     fakeTextboxPath = nil,
     scrollAreaPath = nil,
@@ -220,6 +224,9 @@ Textbox = {
     _lineHeightExplicit = nil,
     _fakeTextboxPasteCoroutine = nil,
 
+    -- When true, _redlow yields periodicaly
+    _reflowYieldEnabled = false,
+
     -- TODO(nightly): temporary shift +enter anti dupe \n.
     _fakeInsertedNewline = false,
 
@@ -284,7 +291,7 @@ function Textbox:setup(widgetName, options)
     inst.tabSpaces = options.tabInsertText or inst.tabSpaces
     inst.verticalAlign = options.verticalAlign or "bottom"
     inst.textOffsetY = options.textOffsetY or 0
-    inst.parrentWidgetPath = widgetName
+    inst.parentWidgetPath = widgetName
     inst.caretColor = options.caretColor or CARET_COLOR
     inst._screenOffset = options.screenOffset or inst._screenOffset
     inst.unfocusOnClickOutside = options.unfocusOnClickOutside
@@ -339,8 +346,8 @@ function Textbox:setup(widgetName, options)
     widget.addChild(lytPath, {
         type = "canvas", rect = canvasRect, zlevel = 3,
         captureMouseEvents = false, captureKeyboardEvents = false,
-    }, WIDGET_SHORTS.carretCanvas)
-    inst.carretCanvasPath = lytPath .. dotWidget(WIDGET_SHORTS.carretCanvas)
+    }, WIDGET_SHORTS.caretCanvas)
+    inst.caretCanvasPath = lytPath .. dotWidget(WIDGET_SHORTS.caretCanvas)
 
     -- Fake textbox for input capture
     widget.addChild(lytPath, {
@@ -352,7 +359,7 @@ function Textbox:setup(widgetName, options)
 
     -- Bind canvases
     inst.textCanvas = widget.bindCanvas(inst.textCanvasPath)
-    inst.carretCanvas = widget.bindCanvas(inst.carretCanvasPath)
+    inst.caretCanvas = widget.bindCanvas(inst.caretCanvasPath)
 
     inst:_setupMeasureLabel()
 
@@ -372,7 +379,7 @@ function Textbox:setup(widgetName, options)
 
     widget.setSize(inst.path, { width, height })
     widget.setSize(inst.textCanvasPath, canvasSize)
-    widget.setSize(inst.carretCanvasPath, canvasSize)
+    widget.setSize(inst.caretCanvasPath, canvasSize)
     widget.setSize(inst.scrollAreaPath, { width + 20, height })
 
     inst.rect = { 0, 0, width, height }
@@ -451,7 +458,7 @@ function Textbox:_setupMeasureLabel()
 end
 
 function Textbox:_getTextBaseY()
-    local canvasH = self.carretCanvas:size()[2]
+    local canvasH = self.caretCanvas:size()[2]
     local effectiveH = (#self.lines <= 1) and self.minHeight or canvasH
     return (effectiveH - PAD) + self.scrollY + (self.textOffsetY or 0)
 end
@@ -568,29 +575,20 @@ function Textbox:_getWrapWidth()
 end
 
 ---@protected
-function Textbox:_reflow()
+---@param fromChar number
+---@param toChar number
+---@return table lines
+function Textbox:_wrapRange(fromChar, toChar)
     local lines = {}
-    self.lines = lines
 
     local text = self.text or ""
     local maxW = math.max(0, self:_getWrapWidth())
 
-    if self.charLen == 0 then
-        lines[1] = {
-            startIdx = 1,
-            endIdx = 0,
-            charXs = {},
-            width = 0,
-            text = "",
-        }
-        return
-    end
-
-    local lineStartCI = 1
+    local lineStartCI = fromChar
     local lineChars = {}
     local charXs = {}
     local lineWidth = 0
-    local lastBreakIndex = nil
+    local lastBreakIndex
 
     local function rebuildLineMetrics()
         charXs = {}
@@ -613,8 +611,8 @@ function Textbox:_reflow()
         }
     end
 
-    local bi = 1
-    for ci = 1, self.charLen do
+    local bi = utf8.offset(text, fromChar) or (#text + 1)
+    for ci = fromChar, toChar do
         local nextBi = utf8.offset(text, 2, bi) or (#text + 1)
         local ch = text:sub(bi, nextBi - 1)
 
@@ -696,11 +694,18 @@ function Textbox:_reflow()
         end
 
         bi = nextBi
+
+        if self._reflowYieldEnabled and ci % REFLOW_YIELD_INTERVAL == 0 then
+            local co, ismain = coroutine.running()
+            if co and not ismain then
+                coroutine.yield()
+            end
+        end
     end
 
-    if lineStartCI <= self.charLen then
-        flushLine(self.charLen, false)
-    else
+    if lineStartCI <= toChar then
+        flushLine(toChar, false)
+    elseif toChar >= self.charLen then
         lines[#lines + 1] = {
             startIdx = lineStartCI,
             endIdx = lineStartCI - 1,
@@ -709,6 +714,153 @@ function Textbox:_reflow()
             text = "",
         }
     end
+
+    return lines
+end
+
+---@protected
+function Textbox:_reflow()
+    self.lines = self:_wrapRange(1, self.charLen)
+end
+
+---@protected
+---@param charIdx number
+---@return number lineIndex
+function Textbox:_lineIndexOfChar(charIdx)
+    local lines = self.lines
+    local n = #lines
+    if n == 0 then
+        return 1
+    end
+    if charIdx < 1 then
+        return 1
+    end
+    local lo, hi, ans = 1, n, 1
+    while lo <= hi do
+        local mid = math.floor((lo + hi) / 2)
+        if lines[mid].startIdx <= charIdx then
+            ans = mid
+            lo = mid + 1
+        else
+            hi = mid - 1
+        end
+    end
+    return ans
+end
+
+---@protected
+function Textbox:_paragraphStartLine(idx)
+    while idx > 1 and not self.lines[idx - 1].endsWithNewline do
+        idx = idx - 1
+    end
+    return idx
+end
+
+---@protected
+function Textbox:_paragraphEndLine(idx)
+    local n = #self.lines
+    while idx < n and not self.lines[idx].endsWithNewline do
+        idx = idx + 1
+    end
+    return idx
+end
+
+---@protected
+---@param opts table? { onChanged = boolean, pushUndo = boolean, actionType = string }
+function Textbox:_startReflowCoroutine(opts)
+    opts = opts or {}
+    self._fakeTextboxPasteCoroutine = coroutine.create(function()
+        self._reflowYieldEnabled = true
+        self:_reflow()
+        self._reflowYieldEnabled = false
+        coroutine.yield()
+
+        self:_updateAutoHeight()
+        self:_ensureCursorVisible()
+        self:_resetBlink()
+        self:_invalidateAll()
+
+        if opts.onChanged and self.onChanged then
+            self.onChanged(self.text)
+        end
+        if opts.pushUndo then
+            self:_pushUndoState(opts.actionType or ACTION_TYPES.other, 0)
+        end
+    end)
+end
+
+---@protected
+---@param editStart number? 0
+---@param newInsertedLen number
+---@param oldCharLen number
+---@param actionType string
+---@param suppressOnChanged boolean?
+---@return boolean
+function Textbox:_reflowAfterEdit(editStart, newInsertedLen, oldCharLen, actionType, suppressOnChanged)
+    if editStart == nil or #self.lines == 0 or self.charLen <= INCREMENTAL_REFLOW_MIN then
+        self:_reflow()
+        return false
+    end
+
+    local delta = self.charLen - oldCharLen
+    local oldRemovedLen = newInsertedLen - delta
+
+    -- Locate the touched old paragraph range (old lines still describe the old text).
+    local leftChar = math.max(1, math.min(editStart, oldCharLen))
+    local oldFirst = self:_paragraphStartLine(self:_lineIndexOfChar(leftChar))
+
+    local rightChar = editStart + oldRemovedLen + 1
+    local rightLineIdx
+    if rightChar > oldCharLen then
+        rightLineIdx = #self.lines
+    else
+        rightLineIdx = self:_lineIndexOfChar(rightChar)
+    end
+    local oldLast = self:_paragraphEndLine(rightLineIdx)
+
+    if oldFirst < 1 or oldLast > #self.lines or oldLast < oldFirst then
+        self:_reflow()
+        return false
+    end
+
+    local pStart = self.lines[oldFirst].startIdx
+    local pEndOld = self.lines[oldLast].endIdx
+    local pEnd = pEndOld + delta
+
+    if pEnd >= self.charLen then
+        pEnd = self.charLen
+        oldLast = #self.lines
+    end
+
+    if pStart < 1 or pEnd < pStart or (pEnd - pStart) > INCREMENTAL_REFLOW_MAX_SPAN then
+        self:_startReflowCoroutine({
+            onChanged = not suppressOnChanged,
+            pushUndo = not suppressOnChanged,
+            actionType = actionType,
+        })
+        return true
+    end
+
+    local newParaLines = self:_wrapRange(pStart, pEnd)
+
+    local newLines = {}
+    for i = 1, oldFirst - 1 do
+        newLines[#newLines + 1] = self.lines[i]
+    end
+    for i = 1, #newParaLines do
+        newLines[#newLines + 1] = newParaLines[i]
+    end
+    for i = oldLast + 1, #self.lines do
+        local ln = self.lines[i]
+        ln.startIdx = ln.startIdx + delta
+        ln.endIdx = ln.endIdx + delta
+        if ln.visibleEndIdx then
+            ln.visibleEndIdx = ln.visibleEndIdx + delta
+        end
+        newLines[#newLines + 1] = ln
+    end
+    self.lines = newLines
+    return false
 end
 
 -- ─────────────────────────── Cursor ─────────────────────────────────────
@@ -776,7 +928,7 @@ end
 
 ---@protected
 function Textbox:_xyToCursor(clickX, clickY)
-    local sz = self.carretCanvas:size()
+    local sz = self.caretCanvas:size()
     local lineAdvance = self:_getLineAdvance()
     local lineIdx = clamp(
             math.floor((sz[2] - PAD + self.scrollY - clickY) / lineAdvance) + 1,
@@ -847,7 +999,7 @@ function Textbox:_selectTextUnitAtCursor(pos)
         return false
     end
 
-    local charIdx = nil
+    local charIdx
     local rightChar = pos < self.charLen and utf8.charAt(self.text, pos + 1) or nil
     if rightChar then
         charIdx = pos + 1
@@ -894,9 +1046,13 @@ end
 
 -- ─────────────────────────── Text editing ────────────────────────────────────
 ---@protected
+--- BEHOLD MY MAGNUM OPUS FOR LUA INSTRUCTIONS SAVE
+--- Now we are using the builtin instead of our custom one
 function Textbox:_splice(from, to)
-    local before = from > 0 and utf8.sub(self.text, 1, from) or ""
-    self.text = before .. (utf8.sub(self.text, to + 1) or "")
+    local text = self.text
+    local fromByte = utf8.offset(text, from + 1) or (#text + 1)
+    local toByte = utf8.offset(text, to + 1) or (#text + 1)
+    self.text = text:sub(1, fromByte - 1) .. text:sub(toByte)
 end
 ---@protected
 function Textbox:_deleteSelection()
@@ -917,21 +1073,23 @@ function Textbox:_insertText(str, suppressOnChanged)
     end
     local hadSelection = self:_deleteSelection()
     if hadSelection then
-        -- Break the action grouping chain when replacing a selection
         self._lastActionType = nil
         self._timeSinceLastAction = self._actionGroupTimeThreshold
     end
-    local before = self.cursorPos > 0 and utf8.sub(self.text, 1, self.cursorPos) or ""
-    self.text = before .. str .. (utf8.sub(self.text, self.cursorPos + 1) or "")
-    self.cursorPos = self.cursorPos + utf8.len(str)
+    local editStart = self.cursorPos
+    local insertedLen = utf8.len(str)
+    local text = self.text
+    local cutByte = utf8.offset(text, self.cursorPos + 1) or (#text + 1)
+    self.text = text:sub(1, cutByte - 1) .. str .. text:sub(cutByte)
+    self.cursorPos = self.cursorPos + insertedLen
     self.selAnchor = nil
-    self:_onTextChanged(ACTION_TYPES.insert, suppressOnChanged)
+    self:_onTextChanged(ACTION_TYPES.insert, suppressOnChanged, editStart, insertedLen)
 end
 
 ---@protected
 function Textbox:_deleteBack()
     if self:_deleteSelection() then
-        self:_onTextChanged(ACTION_TYPES.backspace);
+        self:_onTextChanged(ACTION_TYPES.backspace, nil, self.cursorPos, 0);
         return
     end
     if self.cursorPos <= 0 then
@@ -940,20 +1098,21 @@ function Textbox:_deleteBack()
     self:_splice(self.cursorPos - 1, self.cursorPos)
     self.cursorPos = self.cursorPos - 1
     self.selAnchor = nil
-    self:_onTextChanged(ACTION_TYPES.backspace)
+    self:_onTextChanged(ACTION_TYPES.backspace, nil, self.cursorPos, 0)
 end
 ---@protected
 function Textbox:_deleteForward()
     if self:_deleteSelection() then
-        self:_onTextChanged(ACTION_TYPES.delete);
+        self:_onTextChanged(ACTION_TYPES.delete, nil, self.cursorPos, 0);
         return
     end
     if self.cursorPos >= self.charLen then
         return
     end
+    local editStart = self.cursorPos
     self:_splice(self.cursorPos, self.cursorPos + 1)
     self.selAnchor = nil
-    self:_onTextChanged(ACTION_TYPES.delete)
+    self:_onTextChanged(ACTION_TYPES.delete, nil, editStart, 0)
 end
 
 -- ─────────────────────────── Word ─────────────────────────────────
@@ -982,7 +1141,7 @@ end
 ---@protected
 function Textbox:_deleteWordBack()
     if self:_deleteSelection() then
-        self:_onTextChanged(ACTION_TYPES.backspace);
+        self:_onTextChanged(ACTION_TYPES.backspace, nil, self.cursorPos, 0);
         return
     end
     if self.cursorPos <= 0 then
@@ -1005,23 +1164,24 @@ function Textbox:_deleteWordBack()
         self:_splice(newPos, self.cursorPos)
         self.cursorPos = newPos
         self.selAnchor = nil
-        self:_onTextChanged(ACTION_TYPES.backspace)
+        self:_onTextChanged(ACTION_TYPES.backspace, nil, newPos, 0)
     end
 end
 ---@protected
 function Textbox:_deleteWordForward()
     if self:_deleteSelection() then
-        self:_onTextChanged(ACTION_TYPES.delete);
+        self:_onTextChanged(ACTION_TYPES.delete, nil, self.cursorPos, 0);
         return
     end
     if self.cursorPos >= self.charLen then
         return
     end
+    local editStart = self.cursorPos
     local newPos = self:_wordBoundaryRight(self.cursorPos)
     if newPos > self.cursorPos then
         self:_splice(self.cursorPos, newPos)
         self.selAnchor = nil
-        self:_onTextChanged(ACTION_TYPES.delete)
+        self:_onTextChanged(ACTION_TYPES.delete, nil, editStart, 0)
     end
 end
 
@@ -1050,6 +1210,11 @@ function Textbox:_restoreState(state, suppressOnChanged)
     self.charLen = utf8.len(self.text)
 
     self:_invalidateAll()
+    if self.charLen > MAX_SYNC_REFLOW_CHARS then
+        self:_startReflowCoroutine({ onChanged = not suppressOnChanged })
+        return
+    end
+
     self:_reflow()
     self:_updateAutoHeight()
     self:_ensureCursorVisible()
@@ -1131,7 +1296,12 @@ function Textbox:_redo()
 end
 
 ---@protected
-function Textbox:_onTextChanged(actionType, suppressOnChanged)
+---@param actionType string
+---@param suppressOnChanged boolean?
+---@param editStart number? 0
+---@param newInsertedLen number?
+function Textbox:_onTextChanged(actionType, suppressOnChanged, editStart, newInsertedLen)
+    local oldCharLen = self.charLen
     self.charLen = utf8.len(self.text)
     self.cursorPos = clamp(self.cursorPos, 0, self.charLen)
     self._cursorAffinity = CURSOR_AFFINITY.forward
@@ -1141,7 +1311,11 @@ function Textbox:_onTextChanged(actionType, suppressOnChanged)
     end
 
     self:_invalidateAll()
-    self:_reflow()
+
+    if self:_reflowAfterEdit(editStart, newInsertedLen or 0, oldCharLen, actionType, suppressOnChanged) then
+        return
+    end
+
     self:_updateAutoHeight()
     self:_ensureCursorVisible()
     self:_resetBlink()
@@ -1268,7 +1442,7 @@ function Textbox:_getContentHeight()
 end
 ---@protected
 function Textbox:_getViewHeight()
-    local h = self.carretCanvas:size()[2]
+    local h = self.caretCanvas:size()[2]
     return math.max(1, h)
 end
 ---@protected
@@ -1312,18 +1486,7 @@ end
 
 ---@protected
 function Textbox:_ensureCursorVisible()
-    --local contentH = self:_getContentHeight()
     local viewH = self:_getViewHeight()
-
-    --[[    if contentH + PAD * 2 <= viewH then
-            if self.scrollY ~= 0 then
-                self.scrollY = 0
-                self:_invalidateAll()
-            else
-                self:_invalidateCaret()
-            end
-            return
-        end]]
     local li = self:_cursorToLineX(self.cursorPos)
     local lineAdvance = self:_getLineAdvance()
 
@@ -1358,7 +1521,7 @@ end
 function Textbox:_processInput(dt, events, mousePos)
     self.caretTimer = self.caretTimer + dt
     self._doubleClickTimer = math.max(0, (self._doubleClickTimer or 0) - dt)
-    -- TODO(nightly): reset the shif + enter anidupe flag each frame.
+    -- TODO(nightly): reset the shif + enter antidupe flag each frame.
     self._fakeInsertedNewline = false
 
     if self.caretTimer >= CARET_BLINK_INTERVAL then
@@ -1402,6 +1565,11 @@ function Textbox:_processInput(dt, events, mousePos)
         return
     end
 
+    if self._fakeTextboxPasteCoroutine then
+        self:_resumeFakeTextboxPasteCoroutine()
+        return
+    end
+
     self:_processMouseEvents(events, mousePos)
     if not self.focused then
         return
@@ -1436,6 +1604,9 @@ function Textbox:_processInput(dt, events, mousePos)
     end
 
     self:_pollFakeTextbox()
+    if self._fakeTextboxPasteCoroutine then
+        return
+    end
     self:_processKeys(events)
 end
 
@@ -1491,12 +1662,12 @@ function Textbox:_getChildChainOffset()
         return self._childrenRect
     end
 
-    local parts = self:_splitWidgetPath(self.parrentWidgetPath)
+    local parts = self:_splitWidgetPath(self.parentWidgetPath)
     if DEBUG then
         logInfo("Widget path parts: %s", sb.printJson(parts))
     end
     if #parts == 0 then
-        self._firstParent = self.parrentWidgetPath
+        self._firstParent = self.parentWidgetPath
         self._childrenRect = { 0, 0 }
         return self._childrenRect
     end
@@ -1588,7 +1759,7 @@ function Textbox:_getParentWidgetLocalPosition()
         return vec2.add(firstParentPos, childChain)
     end
 
-    return widget.getPosition(self.parrentWidgetPath)
+    return widget.getPosition(self.parentWidgetPath)
 end
 
 ---@protected
@@ -1605,7 +1776,7 @@ function Textbox:_getWidgetScreenRect()
     local scale = interface.scale() or 1
 
     local screenPos = vec2.add(anchorOffset, vec2.mul(uiPos, scale))
-    local size = vec2.mul(self.carretCanvas:size(), scale)
+    local size = vec2.mul(self.caretCanvas:size(), scale)
 
     return {
         screenPos[1],
@@ -1617,7 +1788,7 @@ end
 
 ---@protected
 function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
-    if not self.carretCanvas then
+    if not self.caretCanvas then
         return nil
     end
 
@@ -1630,7 +1801,7 @@ function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
     }
 
     if clampToCanvas then
-        local sz = self.carretCanvas:size()
+        local sz = self.caretCanvas:size()
         localMouse[1] = clamp(localMouse[1], 0, sz[1])
         localMouse[2] = clamp(localMouse[2], 0, sz[2])
     end
@@ -1640,7 +1811,7 @@ function Textbox:_screenToLocalMouse(mouseScreen, clampToCanvas)
             mouseScreen = mouseScreen,
             widgetRect = widgetRect,
             localMouse = localMouse,
-            canvasMouse = self.carretCanvas and self.carretCanvas:mousePosition(),
+            canvasMouse = self.caretCanvas and self.caretCanvas:mousePosition(),
             scale = scale
         }))
     end
@@ -1650,7 +1821,7 @@ end
 
 ---@protected
 function Textbox:_getMouseHit(mouseScreen)
-    if not self.carretCanvas then
+    if not self.caretCanvas then
         return false, nil, nil
     end
 
@@ -1664,7 +1835,7 @@ end
 
 ---@protected
 function Textbox:_processMouseEvents(events, mouseScreen)
-    if not self.carretCanvas then
+    if not self.caretCanvas then
         return
     end
 
@@ -1687,7 +1858,7 @@ function Textbox:_processMouseEvents(events, mouseScreen)
 
             local hit, localMouse = self:_getMouseHit(mouseScreen)
 
-            if hit and not widget.hasFocus(self.carretCanvasPath) then
+            if hit and not widget.hasFocus(self.caretCanvasPath) then
                 hit = false
             end
 
@@ -1818,6 +1989,7 @@ end
 ---@protected
 function Textbox:_clearFakeTextboxPasteCoroutine(clearBufferedText)
     self._fakeTextboxPasteCoroutine = nil
+    self._reflowYieldEnabled = false
 
     if clearBufferedText and self.fakeTextbox then
         widget.setText(self.fakeTextbox, "")
@@ -1835,22 +2007,36 @@ function Textbox:_startFakeTextboxPasteCoroutine(txt)
     end
 
     self._fakeTextboxPasteCoroutine = coroutine.create(function()
-        local fromChar = 1
+        --  replace
+        self:_deleteSelection()
 
-        while fromChar <= totalChars do
-            local toChar = math.min(totalChars, fromChar + FAKE_TEXTBOX_COROUTINE_CHUNK_SIZE - 1)
-            local chunk = utf8.sub(txt, fromChar, toChar)
-            local isLastChunk = toChar >= totalChars
+        local cur = self.text
+        local cutByte = utf8.offset(cur, self.cursorPos + 1) or (#cur + 1)
+        self.text = cur:sub(1, cutByte - 1) .. txt .. cur:sub(cutByte)
+        self.cursorPos = self.cursorPos + totalChars
+        self.selAnchor = nil
+        self.charLen = utf8.len(self.text)
+        coroutine.yield()
 
-            if chunk ~= "" then
-                self:_insertText(chunk, not isLastChunk)
-            end
+        -- reflow
+        self._reflowYieldEnabled = true
+        self:_reflow()
+        coroutine.yield()
+        self:_updateAutoHeight()
+        self._reflowYieldEnabled = false
+        coroutine.yield()
 
-            fromChar = toChar + 1
-            if fromChar <= totalChars then
-                coroutine.yield(fromChar)
-            end
+        -- final
+        self.cursorPos = clamp(self.cursorPos, 0, self.charLen)
+        self._cursorAffinity = CURSOR_AFFINITY.forward
+        self:_ensureCursorVisible()
+        self:_resetBlink()
+        self:_invalidateAll()
+
+        if self.onChanged then
+            self.onChanged(self.text)
         end
+        self:_pushUndoState(ACTION_TYPES.paste, 0)
     end)
 end
 
@@ -1883,7 +2069,7 @@ end
 
 local KEY_DISPATCH = {
     ---@param self Textbox
-    [KEYS.Backspace] = function(self, ctrl, shift)
+    [KEYS.Backspace] = function(self, ctrl, _)
         if ctrl then
             self:_deleteWordBack()
         else
@@ -1891,7 +2077,7 @@ local KEY_DISPATCH = {
         end
     end,
     ---@param self Textbox
-    [KEYS.Delete] = function(self, ctrl, shift)
+    [KEYS.Delete] = function(self, ctrl, _)
         if ctrl then
             self:_deleteWordForward()
         else
@@ -1899,7 +2085,7 @@ local KEY_DISPATCH = {
         end
     end,
     ---@param self Textbox
-    [KEYS.Return] = function(self, ctrl, shift)
+    [KEYS.Return] = function(self, _, shift)
         if shift then
             -- TODO(osb-nightly): on nightly OSB the fakeTextbox already inserted
             if not self._fakeInsertedNewline then
@@ -1910,13 +2096,13 @@ local KEY_DISPATCH = {
         end
     end,
     ---@param self Textbox
-    [KEYS.Escape] = function(self, ctrl, shift)
+    [KEYS.Escape] = function(self, _, _)
         if self.onEscapeKey then
             self:onEscapeKey()
         end
     end,
     ---@param self Textbox
-    [KEYS.Tab] = function(self, ctrl, shift)
+    [KEYS.Tab] = function(self, _, _)
         self:_insertText(self.tabSpaces or "  ")
     end,
     ---@param self Textbox
@@ -1936,11 +2122,11 @@ local KEY_DISPATCH = {
         end
     end,
     ---@param self Textbox
-    [KEYS.Up] = function(self, ctrl, shift)
+    [KEYS.Up] = function(self, _, shift)
         self:_moveCursorUp(shift)
     end,
     ---@param self Textbox
-    [KEYS.Down] = function(self, ctrl, shift)
+    [KEYS.Down] = function(self, _, shift)
         self:_moveCursorDown(shift)
     end,
     ---@param self Textbox
@@ -1964,7 +2150,7 @@ local KEY_DISPATCH = {
         end
     end,
     ---@param self Textbox
-    [KEYS.A] = function(self, ctrl, shift)
+    [KEYS.A] = function(self, ctrl, _)
         if not ctrl then
             return
         end
@@ -1973,7 +2159,7 @@ local KEY_DISPATCH = {
         self:_resetBlink()
     end,
     ---@param self Textbox
-    [KEYS.C] = function(self, ctrl, shift)
+    [KEYS.C] = function(self, ctrl, _)
         if not ctrl then
             return
         end
@@ -1983,7 +2169,7 @@ local KEY_DISPATCH = {
         end
     end,
     ---@param self Textbox
-    [KEYS.X] = function(self, ctrl, shift)
+    [KEYS.X] = function(self, ctrl, _)
         if not ctrl then
             return
         end
@@ -1991,7 +2177,7 @@ local KEY_DISPATCH = {
         if sel ~= "" then
             clipboard.setText(sel)
             self:_deleteSelection()
-            self:_onTextChanged(ACTION_TYPES.delete)
+            self:_onTextChanged(ACTION_TYPES.delete, nil, self.cursorPos, 0)
         end
     end,
     ---@param self Textbox
@@ -2006,7 +2192,7 @@ local KEY_DISPATCH = {
         end
     end,
     ---@param self Textbox
-    [KEYS.Y] = function(self, ctrl, shift)
+    [KEYS.Y] = function(self, ctrl, _)
         if ctrl then
             self:_redo()
         end
@@ -2025,6 +2211,9 @@ function Textbox:_processKeys(events)
             local handler = KEY_DISPATCH[key]
             if handler then
                 handler(self, ctrl, shift)
+                if self._fakeTextboxPasteCoroutine then
+                    return
+                end
             end
         end
     end
@@ -2084,7 +2273,7 @@ end
 ---@protected
 ---@protected
 function Textbox:_drawCaret()
-    local canvas = self.carretCanvas
+    local canvas = self.caretCanvas
     if not canvas then
         return
     end
@@ -2171,7 +2360,7 @@ function Textbox:_updateAutoHeight()
         -- canvases
         local canvasSize = { width, height }
         widget.setSize(self.textCanvasPath, canvasSize)
-        widget.setSize(self.carretCanvasPath, canvasSize)
+        widget.setSize(self.caretCanvasPath, canvasSize)
 
         -- scroll area
         widget.setSize(self.scrollAreaPath, { width + 20, height })
@@ -2179,7 +2368,6 @@ function Textbox:_updateAutoHeight()
         self.rect = newRect
 
         self:_invalidateAll()
-        self:_reflow()
         self:_ensureCursorVisible()
 
         if self.onSizeChange then
@@ -2221,12 +2409,20 @@ function Textbox:setText(text)
     self._cursorAffinity = CURSOR_AFFINITY.forward
     self.scrollY = 0
     self:_invalidateAll()
+    self.undoHistory = {}
+    self.redoHistory = {}
+
+    -- FOR LARGER TEXT 🙃
+    if self.charLen > MAX_SYNC_REFLOW_CHARS then
+        self:_startReflowCoroutine({})
+        self:_saveInitialState()
+        return
+    end
+
     self:_reflow()
     self:_updateAutoHeight()
     self:_ensureCursorVisible()
     self:_resetBlink()
-    self.undoHistory = {}
-    self.redoHistory = {}
     self:_saveInitialState()
 end
 
@@ -2285,7 +2481,7 @@ function Textbox:clear()
     self:_invalidateAll()
     self:_reflow()
     self.textCanvas:clear()
-    self.carretCanvas:clear()
+    self.caretCanvas:clear()
     self:_saveInitialState()
 end
 
@@ -2513,7 +2709,7 @@ function Textbox:getHint()
 end
 
 ---@public
----@param number
+---@param maxHeight
 function Textbox:setMaxHeight(maxHeight)
     self.maxHeight = maxHeight
     self:_updateAutoHeight()
@@ -2542,7 +2738,7 @@ function Textbox:setSize(size)
     self.currentHeight = height
     widget.setSize(self.path, { width, height })
     widget.setSize(self.textCanvasPath, { width, height })
-    widget.setSize(self.carretCanvasPath, { width, height })
+    widget.setSize(self.caretCanvasPath, { width, height })
     widget.setSize(self.scrollAreaPath, { width + 20, height })
 
     self.rect = { 0, 0, width, height }
@@ -2566,7 +2762,9 @@ function Textbox.update(dt)
     for _, tbx in pairs(activeTextboxes) do
         if tbx.setupDone then
             tbx:_processInput(dt, events, mousePos);
-            tbx:_draw()
+            if not tbx._fakeTextboxPasteCoroutine then
+                tbx:_draw()
+            end
         end
     end
 end

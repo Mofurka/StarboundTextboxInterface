@@ -1,4 +1,4 @@
-require "/interface/StarboundTextboxInterface/scipts/utf8/utf8data.lua"
+require "/interface/StarboundTextboxInterface/scripts/utf8/utf8data.lua"
 
 -- ─────────────────────────── utf8 ───────────────────────────────────
 --utf8 module (Cosmin Apreutesei, public domain).

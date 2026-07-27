@@ -339,7 +339,7 @@ function Combobox:fillValues(searchText, defaultValue)
             widget.setData(widgetPath(listPath, li), itemData)
 
             if defaultValue and displayName == defaultValue then
-                widget.setListSelected(widgetPath(listPath, li))
+                widget.setListSelected(widgetPath(listPath), li)
             end
 
             self.listMap[displayName] = li

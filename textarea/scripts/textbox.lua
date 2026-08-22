@@ -177,6 +177,7 @@ Textbox = {
     scrollY = 0,
     caretTimer = 0,
     tabSpaces = "  ",
+    scrollLinesPerWheel = 1,
     caretVisible = true,
     focused = false,
     caretColor = CARET_COLOR,
@@ -265,6 +266,7 @@ end
 ---@field onEnterKey fun()?
 ---@field onEscapeKey fun()?
 ---@field tabInsertText string?
+---@field scrollLinesPerWheel number?
 ---@field maxHeight number?
 ---@field onSizeChange fun(newHeight: number[] {width, height})?
 ---@field screenOffset number[]? {x, y} - relative to the widget rect, for example {0, -10} would move the text 10 pixels up from the bottom of the widget
@@ -289,6 +291,7 @@ function Textbox:setup(widgetName, options)
     inst.maxHeight = options.maxHeight
     inst.onSizeChange = options.onSizeChange
     inst.tabSpaces = options.tabInsertText or inst.tabSpaces
+    inst.scrollLinesPerWheel = options.scrollLinesPerWheel or inst.scrollLinesPerWheel
     inst.verticalAlign = options.verticalAlign or "bottom"
     inst.textOffsetY = options.textOffsetY or 0
     inst.parentWidgetPath = widgetName
@@ -1446,8 +1449,36 @@ function Textbox:_getViewHeight()
     return math.max(1, h)
 end
 ---@protected
+---@return number
+function Textbox:_getFullyVisibleLineCount()
+    local lineAdvance = self:_getLineAdvance()
+    if lineAdvance <= 0 then
+        return 1
+    end
+    local usable = self:_getViewHeight() - PAD - self.lineHeight
+    if usable < 0 then
+        return 1
+    end
+    return math.max(1, math.floor(usable / lineAdvance) + 1)
+end
+
+---@protected
 function Textbox:_getMaxScroll()
-    return math.max(0, self:_getContentHeight() - self:_getViewHeight() + PAD * 2)
+    local hidden = #self.lines - self:_getFullyVisibleLineCount()
+    if hidden <= 0 then
+        return 0
+    end
+    return hidden * self:_getLineAdvance()
+end
+
+---@protected
+function Textbox:_clampScroll(scrollY)
+    local lineAdvance = self:_getLineAdvance()
+    local maxScroll = self:_getMaxScroll()
+    if lineAdvance <= 0 then
+        return clamp(scrollY, 0, maxScroll)
+    end
+    return clamp(math.floor(scrollY / lineAdvance + 0.5) * lineAdvance, 0, maxScroll)
 end
 
 ---@protected
@@ -1457,10 +1488,13 @@ function Textbox:_getVisibleLineRange()
         return 1, 1
     end
 
-    local viewH = self:_getViewHeight()
     local lineAdvance = self:_getLineAdvance(total)
+    if lineAdvance <= 0 then
+        return 1, total
+    end
+
     local first = math.floor(self.scrollY / lineAdvance) + 1
-    local last = math.ceil((self.scrollY + viewH) / lineAdvance) + 1
+    local last = first + self:_getFullyVisibleLineCount() - 1
 
     first = clamp(first, 1, total)
     last = clamp(last, first, total)
@@ -1486,29 +1520,24 @@ end
 
 ---@protected
 function Textbox:_ensureCursorVisible()
-    local viewH = self:_getViewHeight()
-    local li = self:_cursorToLineX(self.cursorPos)
     local lineAdvance = self:_getLineAdvance()
-
-    local cursorTop = (li - 1) * lineAdvance
-    local cursorBot = cursorTop + self.lineHeight
-
-    local innerViewH = math.max(1, viewH - PAD * 2)
-
-    local margin = math.floor(lineAdvance * 0.5)
-
-    local topLimit = self.scrollY + margin
-    local bottomLimit = self.scrollY + innerViewH - margin
-
-    local old = self.scrollY
-
-    if cursorTop < topLimit then
-        self.scrollY = cursorTop - margin
-    elseif cursorBot > bottomLimit then
-        self.scrollY = cursorBot - innerViewH + margin
+    if lineAdvance <= 0 then
+        self:_invalidateCaret()
+        return
     end
 
-    self.scrollY = clamp(self.scrollY, 0, self:_getMaxScroll())
+    local li = self:_cursorToLineX(self.cursorPos)
+    local visibleLines = self:_getFullyVisibleLineCount()
+
+    local firstLine = math.floor(self.scrollY / lineAdvance) + 1
+    if li < firstLine then
+        firstLine = li
+    elseif li > firstLine + visibleLines - 1 then
+        firstLine = li - visibleLines + 1
+    end
+
+    local old = self.scrollY
+    self.scrollY = clamp((firstLine - 1) * lineAdvance, 0, self:_getMaxScroll())
 
     if self.scrollY ~= old then
         self:_invalidateAll()
@@ -1844,10 +1873,8 @@ function Textbox:_processMouseEvents(events, mouseScreen)
             local hit = self:_getMouseHit(mouseScreen)
             if hit then
                 local lineAdvance = self:_getLineAdvance()
-                self.scrollY = clamp(
-                        self.scrollY - ev.data.mouseWheel * lineAdvance * 3,
-                        0, self:_getMaxScroll()
-                )
+                local step = self.scrollLinesPerWheel or 3
+                self.scrollY = self:_clampScroll(self.scrollY - ev.data.mouseWheel * lineAdvance * step)
                 self:_invalidateCaret()
                 self.textDirty = true
             end
@@ -2229,6 +2256,13 @@ function Textbox:_drawText()
     end
     canvas:clear()
 
+    if DEBUG then
+        canvas:drawRect(
+                { 0, 0, canvas:size()[1], canvas:size()[2] },
+                { 255, 0, 0, 100 }
+        )
+    end
+
     local metrics = self:_measureFontMetrics()
     local baseY = self:_getTextBaseY()
     local lineAdvance = self:_getLineAdvance()
@@ -2338,6 +2372,22 @@ function Textbox:_requiredHeightForLines(lineCount)
 end
 
 ---@protected
+function Textbox:_snapHeightToWholeLines(height)
+    local lineAdvance = self:_getLineAdvance()
+    if lineAdvance <= 0 then
+        return height
+    end
+
+    local usable = height - PAD * 2 - self.lineHeight
+    if usable < 0 then
+        return height
+    end
+
+    local fitLines = math.floor(usable / lineAdvance) + 1
+    return math.min(height, (fitLines - 1) * lineAdvance + self.lineHeight + PAD * 2)
+end
+
+---@protected
 function Textbox:_updateAutoHeight()
     if not self.maxHeight then
         return
@@ -2345,6 +2395,10 @@ function Textbox:_updateAutoHeight()
 
     local contentHeight = self:_requiredHeightForLines(#self.lines)
     local newHeight = clamp(contentHeight, self.minHeight, self.maxHeight)
+
+    if newHeight < contentHeight then
+        newHeight = math.max(self.minHeight, self:_snapHeightToWholeLines(newHeight))
+    end
 
     if newHeight ~= self.currentHeight then
         self.currentHeight = newHeight
@@ -2558,6 +2612,18 @@ function Textbox:setTabInsertText(text)
 end
 
 ---@public
+---@param lines number the name says by itself
+function Textbox:setScrollLinesPerWheel(lines)
+    self.scrollLinesPerWheel = math.max(1, math.floor((tonumber(lines) or 1) + 0.5))
+end
+
+---@public
+---@return number
+function Textbox:getScrollLinesPerWheel()
+    return self.scrollLinesPerWheel or 3
+end
+
+---@public
 ---@return number
 function Textbox:getLineCount()
     return #self.lines
@@ -2573,7 +2639,7 @@ end
 ---@param scrollY number
 function Textbox:setScroll(scrollY)
     local old = self.scrollY
-    self.scrollY = clamp(scrollY, 0, self:_getMaxScroll())
+    self.scrollY = self:_clampScroll(scrollY)
     if self.scrollY ~= old then
         self:_invalidateAll()
     end

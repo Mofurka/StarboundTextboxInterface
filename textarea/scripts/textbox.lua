@@ -34,6 +34,7 @@ local WIDGET_SHORTS = {
     caretCanvas = "__",
     fakeTextbox = "___",
     scrollArea = "____",
+    thumbCanvas = "_____",
     lyt = "_", -- this comes with uuid, so it won't conflict between instances
     measureLabel = "_", -- this comes with uuid, so it won't conflict between instances
 }
@@ -63,6 +64,16 @@ local INCREMENTAL_REFLOW_MIN = 4000
 local INCREMENTAL_REFLOW_MAX_SPAN = 20000
 local MAX_SYNC_REFLOW_CHARS = 30000
 local EMPTY_LINE_HIGHLIGHT_WIDTH = 2
+
+-- ─────────────────────────── scrollbar consants ─────────────────────────────
+local SCROLL_WIDTH_DEFAULT = 8
+local SCROLL_BTN_H = 11
+local SCROLL_THUMB_MIN_H = 10
+local SCROLL_TRACK_COLOR = { 15, 15, 25, 200 }
+local SCROLL_THUMB_COLOR = { 100, 100, 120, 220 }
+local SCROLL_THUMB_HOVER_COLOR = { 150, 155, 175, 255 }
+local SCROLL_BUTTON_SPEED = 160
+local SCROLL_GAP_DEFAULT = 2
 
 local REPEATABLE_KEYS = {
     Backspace = true,
@@ -225,6 +236,15 @@ Textbox = {
     _lineHeightExplicit = nil,
     _fakeTextboxPasteCoroutine = nil,
 
+    scrollConfig = { scrollEnabled = false },
+    thumbCanvas = nil,
+    thumbCanvasPath = nil,
+    _thumbDragging = false,
+    _thumbDragOffset = 0,
+    _holdInitiated = false,
+    _scrollMouseHeld = false,
+    _scrollFloat = nil,
+
     -- When true, _redlow yields periodicaly
     _reflowYieldEnabled = false,
 
@@ -272,6 +292,7 @@ end
 ---@field screenOffset number[]? {x, y} - relative to the widget rect, for example {0, -10} would move the text 10 pixels up from the bottom of the widget
 ---@field unfocusOnClickOutside boolean? - whether the textbox should lose focus when the user clicks outside of it. Default is true.
 ---@field textFont string?
+---@field scroll TextboxScrollConfig?
 
 ---@public
 ---@param widgetName string can be nil
@@ -387,6 +408,10 @@ function Textbox:setup(widgetName, options)
 
     inst.rect = { 0, 0, width, height }
     inst.wrapWidth = width - PAD * 2
+
+    if options.scroll and options.scroll.scrollEnabled ~= false then
+        inst:setupScroll(options.scroll)
+    end
 
     inst:_reflow()
     inst.scrollY = 0
@@ -574,7 +599,17 @@ end
 
 ---@protected
 function Textbox:_getWrapWidth()
-    return math.max(0, self.rect[3] - PAD * 4)
+    local right = self.rect[3] - PAD * 3
+
+    local stripW = self:_getScrollStripWidth()
+    if stripW > 0 then
+        local cfg = self.scrollConfig
+        local offsetX = (cfg.scrollOffset or { 0, 0 })[1] or 0
+        local gap = cfg.scrollGap or SCROLL_GAP_DEFAULT
+        right = math.min(right, self.rect[3] - stripW + offsetX - gap)
+    end
+
+    return math.max(0, right - PAD)
 end
 
 ---@protected
@@ -1545,6 +1580,319 @@ function Textbox:_ensureCursorVisible()
         self:_invalidateCaret()
     end
 end
+-- ─────────────────────────── scrollbar ─────────────────────────────────
+
+---@class TextboxScrollConfig
+---@field scrollEnabled boolean?
+---@field scrollWidth number?
+---@field upButtonImage string?
+---@field upButtonHoverImage string?
+---@field downButtonImage string?
+---@field downButtonHoverImage string?
+---@field scrollThumbColor number[]?
+---@field scrollThumbHoverColor number[]?
+---@field scrollTrackColor number[]?
+---@field scrollButtonSpeed number?
+---@field scrollOffset number[]?
+---@field scrollGap number?
+
+---@protected
+---@return number
+function Textbox:_getScrollStripWidth()
+    local cfg = self.scrollConfig
+    if not cfg or not cfg.scrollEnabled then
+        return 0
+    end
+    return cfg.scrollWidth or SCROLL_WIDTH_DEFAULT
+end
+
+---@protected
+---@return number[]
+function Textbox:_getScrollStripOrigin()
+    local cfg = self.scrollConfig or {}
+    local offset = cfg.scrollOffset or { 0, 0 }
+    return {
+        self.rect[3] - self:_getScrollStripWidth() + (offset[1] or 0),
+        (offset[2] or 0)
+    }
+end
+
+---@public
+---@return boolean
+function Textbox:isScrollbarVisible()
+    return (self.thumbCanvas ~= nil) and (self:_getMaxScroll() > 0)
+end
+
+---@protected
+---@param localMouse number[]?
+---@return boolean
+function Textbox:_isOverScrollStrip(localMouse)
+    if not localMouse or not self:isScrollbarVisible() then
+        return false
+    end
+    local origin = self:_getScrollStripOrigin()
+    local x, y = localMouse[1] - origin[1], localMouse[2] - origin[2]
+    return x >= 0 and x <= self:_getScrollStripWidth()
+            and y >= 0 and y <= self.rect[4]
+end
+
+---@protected
+function Textbox:_layoutScrollStrip()
+    if not self.thumbCanvasPath then
+        return
+    end
+    widget.setPosition(self.thumbCanvasPath, self:_getScrollStripOrigin())
+    widget.setSize(self.thumbCanvasPath, { self:_getScrollStripWidth(), self.rect[4] })
+end
+
+---@public
+---@param scrollConfig TextboxScrollConfig?
+function Textbox:setupScroll(scrollConfig)
+    scrollConfig = scrollConfig or {}
+    self.scrollConfig = {
+        scrollEnabled = true,
+        scrollWidth = scrollConfig.scrollWidth or SCROLL_WIDTH_DEFAULT,
+        upButtonImage = scrollConfig.upButtonImage or "/interface/scrollarea/varrow-forward.png",
+        upButtonHoverImage = scrollConfig.upButtonHoverImage or "/interface/scrollarea/varrow-forwardhover.png",
+        downButtonImage = scrollConfig.downButtonImage or "/interface/scrollarea/varrow-backward.png",
+        downButtonHoverImage = scrollConfig.downButtonHoverImage or "/interface/scrollarea/varrow-backwardhover.png",
+        scrollThumbColor = scrollConfig.scrollThumbColor or SCROLL_THUMB_COLOR,
+        scrollThumbHoverColor = scrollConfig.scrollThumbHoverColor or SCROLL_THUMB_HOVER_COLOR,
+        scrollTrackColor = scrollConfig.scrollTrackColor or SCROLL_TRACK_COLOR,
+        scrollButtonSpeed = scrollConfig.scrollButtonSpeed or SCROLL_BUTTON_SPEED,
+        scrollOffset = scrollConfig.scrollOffset or { 0, 0 },
+        scrollGap = scrollConfig.scrollGap or SCROLL_GAP_DEFAULT,
+    }
+
+    if not self.thumbCanvasPath then
+        local thumbShort = WIDGET_SHORTS.thumbCanvas
+        local w = self.scrollConfig.scrollWidth
+        local origin = self:_getScrollStripOrigin()
+        widget.addChild(self.path, {
+            type = "canvas",
+            rect = { origin[1], origin[2], origin[1] + w, origin[2] + self.rect[4] },
+            zlevel = 4,
+            captureMouseEvents = false,
+            captureKeyboardEvents = false,
+            mouseTransparent = true,
+        }, thumbShort)
+        self.thumbCanvasPath = self.path .. dotWidget(thumbShort)
+        self.thumbCanvas = widget.bindCanvas(self.thumbCanvasPath)
+    end
+
+    self:_layoutScrollStrip()
+    self:_invalidateAll()
+
+    if self.charLen > MAX_SYNC_REFLOW_CHARS then
+        self:_startReflowCoroutine({})
+        return
+    end
+
+    self:_reflow()
+    self:_updateAutoHeight()
+    self:_ensureCursorVisible()
+    self:_drawScrollbar()
+end
+
+---@public
+---@param offset number[]
+function Textbox:setScrollOffset(offset)
+    if not self.thumbCanvasPath then
+        return
+    end
+    self.scrollConfig.scrollOffset = offset or { 0, 0 }
+    self:_applyScrollGeometry()
+end
+
+---@public
+---@return number[] {x, y}
+function Textbox:getScrollOffset()
+    local cfg = self.scrollConfig
+    return (cfg and cfg.scrollOffset) or { 0, 0 }
+end
+
+---@public
+---@param gap number
+function Textbox:setScrollGap(gap)
+    if not self.thumbCanvasPath then
+        return
+    end
+    self.scrollConfig.scrollGap = tonumber(gap) or SCROLL_GAP_DEFAULT
+    self:_applyScrollGeometry()
+end
+
+---@public
+---@return number
+function Textbox:getScrollGap()
+    local cfg = self.scrollConfig
+    return (cfg and cfg.scrollGap) or SCROLL_GAP_DEFAULT
+end
+
+---@protected
+function Textbox:_applyScrollGeometry()
+    self:_layoutScrollStrip()
+    self:_invalidateAll()
+
+    if self.charLen > MAX_SYNC_REFLOW_CHARS then
+        self:_startReflowCoroutine({})
+        return
+    end
+
+    self:_reflow()
+    self:_updateAutoHeight()
+    self:_ensureCursorVisible()
+    self:_drawScrollbar()
+end
+
+---@protected
+---@return number[]
+function Textbox:_thumbLocalMouse()
+    local lm = self:_screenToLocalMouse(input.mousePosition(), false)
+    if not lm then
+        return { -1000, -1000 }
+    end
+    local origin = self:_getScrollStripOrigin()
+    return { lm[1] - origin[1], lm[2] - origin[2] }
+end
+
+---@protected
+---@param canvasH number
+---@return number thumbBot, number thumbTop, number thumbH, number thumbRange
+function Textbox:_getThumbRange(canvasH)
+    local trackH = math.max(1, canvasH - 2 * SCROLL_BTN_H)
+    local totalLines = math.max(1, #self.lines)
+    local visibleLines = self:_getFullyVisibleLineCount()
+
+    local thumbH = clamp(math.floor(trackH * visibleLines / totalLines), SCROLL_THUMB_MIN_H, trackH)
+    local thumbRange = trackH - thumbH
+
+    local maxScroll = self:_getMaxScroll()
+    local t = maxScroll > 0 and (self.scrollY / maxScroll) or 0
+
+    local thumbBot = canvasH - SCROLL_BTN_H - thumbH - math.floor(thumbRange * t)
+    return thumbBot, thumbBot + thumbH, thumbH, thumbRange
+end
+
+---@protected
+function Textbox:_drawScrollbar()
+    local canvas = self.thumbCanvas
+    if not canvas then
+        return
+    end
+    canvas:clear()
+
+    if self:_getMaxScroll() <= 0 then
+        return
+    end
+
+    local cfg = self.scrollConfig
+    local sz = canvas:size()
+    local cw, ch = sz[1], sz[2]
+    local btnH = SCROLL_BTN_H
+
+    canvas:drawRect({ 0, btnH, cw, ch - btnH }, cfg.scrollTrackColor)
+
+    local mp = self:_thumbLocalMouse()
+    local mx, my = mp[1], mp[2]
+    local onCvs = mx >= 0 and mx <= cw and my >= 0 and my <= ch
+
+    local upHover = onCvs and my >= ch - btnH
+    local downHover = onCvs and my <= btnH
+
+    canvas:drawImage(
+            upHover and cfg.upButtonHoverImage or cfg.upButtonImage,
+            { cw * 0.5, ch - btnH * 0.5 }, 1, nil, true)
+    canvas:drawImage(
+            downHover and cfg.downButtonHoverImage or cfg.downButtonImage,
+            { cw * 0.5, btnH * 0.5 }, 1, nil, true)
+
+    local thumbBot, thumbTop = self:_getThumbRange(ch)
+    local thumbHover = onCvs and my >= thumbBot and my <= thumbTop
+    local col = (thumbHover or self._thumbDragging)
+            and cfg.scrollThumbHoverColor
+            or cfg.scrollThumbColor
+
+    canvas:drawRect({ 2, thumbBot, cw - 2, thumbTop }, col)
+end
+
+---@protected
+function Textbox:_updateScroll(dt, events)
+    local canvas = self.thumbCanvas
+    if not canvas then
+        return
+    end
+
+    local maxScroll = self:_getMaxScroll()
+    if maxScroll <= 0 then
+        self._thumbDragging = false
+        self._holdInitiated = false
+        self._scrollMouseHeld = false
+        self._scrollFloat = nil
+        self:_drawScrollbar()
+        return
+    end
+
+    local sz = canvas:size()
+    local cw, ch = sz[1], sz[2]
+    local btnH = SCROLL_BTN_H
+
+    local mp = self:_thumbLocalMouse()
+    local mx, my = mp[1], mp[2]
+    local onCvs = mx >= 0 and mx <= cw
+
+    for _, ev in ipairs(events) do
+        if ev.type == "MouseButtonDown" and ev.data and ev.data.mouseButton == "MouseLeft" then
+            if widget.hasFocus(self.caretCanvasPath) then
+                self._scrollMouseHeld = true
+            end
+        elseif ev.type == "MouseButtonUp" and ev.data and ev.data.mouseButton == "MouseLeft" then
+            self._scrollMouseHeld = false
+        end
+    end
+
+    if self._scrollMouseHeld then
+        if self._thumbDragging then
+            local _, _, thumbH, thumbRange = self:_getThumbRange(ch)
+            if thumbRange > 0 then
+                local newBot = my - self._thumbDragOffset
+                local t = (ch - btnH - thumbH - newBot) / thumbRange
+                self:setScroll(clamp(t, 0, 1) * maxScroll)
+            end
+
+        elseif not self._holdInitiated then
+            self._holdInitiated = true
+            if onCvs then
+                local thumbBot, thumbTop = self:_getThumbRange(ch)
+                if my >= thumbBot and my <= thumbTop then
+                    self._thumbDragging = true
+                    self._thumbDragOffset = my - thumbBot
+                end
+            end
+        end
+
+        if not self._thumbDragging and onCvs then
+            local speed = self.scrollConfig.scrollButtonSpeed
+            local acc = self._scrollFloat or self.scrollY
+
+            if my >= ch - btnH and my <= ch then
+                self._scrollFloat = clamp(acc - speed * dt, 0, maxScroll)
+                self:setScroll(self._scrollFloat)
+            elseif my >= 0 and my <= btnH then
+                self._scrollFloat = clamp(acc + speed * dt, 0, maxScroll)
+                self:setScroll(self._scrollFloat)
+            else
+                self._scrollFloat = nil
+            end
+        end
+    else
+        self._thumbDragging = false
+        self._holdInitiated = false
+        self._scrollFloat = nil
+    end
+
+    self:_drawScrollbar()
+end
+
 -- ─────────────────────────── prosessing ────────────────────────────────
 ---@protected
 function Textbox:_processInput(dt, events, mousePos)
@@ -1889,6 +2237,11 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                 hit = false
             end
 
+            local overStrip = self:_isOverScrollStrip(localMouse)
+            if overStrip then
+                hit = false
+            end
+
             if hit then
                 self:focus()
                 local pos, clickedLi = self:_xyToCursor(localMouse[1], localMouse[2])
@@ -1947,7 +2300,7 @@ function Textbox:_processMouseEvents(events, mouseScreen)
                     self._mouseWasDown = true
                 end
             else
-                if self.unfocusOnClickOutside then
+                if self.unfocusOnClickOutside and not overStrip then
                     self:blur()
                 end
                 self._mouseWasDown = false
@@ -2420,6 +2773,7 @@ function Textbox:_updateAutoHeight()
         widget.setSize(self.scrollAreaPath, { width + 20, height })
 
         self.rect = newRect
+        self:_layoutScrollStrip()
 
         self:_invalidateAll()
         self:_ensureCursorVisible()
@@ -2809,6 +3163,7 @@ function Textbox:setSize(size)
 
     self.rect = { 0, 0, width, height }
     self.wrapWidth = self:_getWrapWidth()
+    self:_layoutScrollStrip()
 
     self:_reflow()
     self:_updateAutoHeight()
@@ -2829,6 +3184,9 @@ function Textbox.update(dt)
         if tbx.setupDone then
             tbx:_processInput(dt, events, mousePos);
             if not tbx._fakeTextboxPasteCoroutine then
+                if tbx.thumbCanvas then
+                    tbx:_updateScroll(dt, events)
+                end
                 tbx:_draw()
             end
         end

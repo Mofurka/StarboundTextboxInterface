@@ -7,10 +7,6 @@ local function widgetPath(...)
     return table.concat({ ... }, ".")
 end
 
-local function widgetPath(...)
-    return table.concat({ ... }, ".")
-end
-
 ---@class ComboboxSchema
 ---@field listUnselected string - Path to the unselected list item image
 ---@field listSelected string - Path to the selected list item image
@@ -199,7 +195,7 @@ function Combobox:bind(widgetName, values, onSelect, options)
     local isChild = widgetName:find("%.")
     local childWidgetName = widgetName:match("([^%.]+)$")
     local parentWidgetName = isChild and widgetName:match("(.+)%..+") or nil
-    local parentFullWidgetName = parentWidgetName or ""
+    local parentFullWidgetName = parentWidgetName
 
     local jsonPath = isChild and widgetName:gsub("%.", ".children.") or widgetName
     widgetConfig = sb.jsonQuery(config.getParameter("gui"), jsonPath)
@@ -267,7 +263,7 @@ function Combobox:bind(widgetName, values, onSelect, options)
     end
 
     -- Create and store combobox
-    local wrapperFullPath = widgetPath(parentFullWidgetName, wrapperName)
+    local wrapperFullPath = parentFullWidgetName and widgetPath(parentFullWidgetName, wrapperName) or wrapperName
 
     local cb = self:_new(wrapperFullPath, onSelect, values, options.defaultValue, options.onClose, options.onOpen, options.sortKeys)
     cb.wrapperName = wrapperName

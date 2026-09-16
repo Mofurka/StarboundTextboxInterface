@@ -2810,15 +2810,20 @@ function Textbox:setText(text)
         text = table.concat(text, "\n")
     end
     self:_clearFakeTextboxPasteCoroutine(true)
-    self.text = text or ""
+    text = text or ""
+
+    if self._lastSavedState and self.text ~= text then
+        table.insert(self.undoHistory, self._lastSavedState)
+        self.redoHistory = {}
+    end
+
+    self.text = text
     self.charLen = utf8.len(self.text)
     self.cursorPos = self.charLen
     self.selAnchor = nil
     self._cursorAffinity = CURSOR_AFFINITY.forward
     self.scrollY = 0
     self:_invalidateAll()
-    self.undoHistory = {}
-    self.redoHistory = {}
 
     -- FOR LARGER TEXT 🙃
     if self.charLen > MAX_SYNC_REFLOW_CHARS then

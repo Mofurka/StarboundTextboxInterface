@@ -3,7 +3,7 @@
 A lightweight and flexible textbox implementation for Starbound UI, built on top of canvas rendering.
 
 > Authors: https://github.com/Mofurka, https://github.com/KrashV
-> Please credit if you use or modify this code  
+> Please credit if you use or modify this code
 
 ---
 
@@ -13,7 +13,6 @@ A lightweight and flexible textbox implementation for Starbound UI, built on top
 > This module is intended to be a submodule for your project.
 > Since Starbound does not support relative paths, you MUST install this at the following path:
 
-
 `/interface/StarboundTextboxInterface`
 
 You can use the following git command to add this submodule to your repo:
@@ -21,6 +20,8 @@ You can use the following git command to add this submodule to your repo:
 ```
 git submodule add https://github.com/Mofurka/StarboundTextboxInterface StarboundTextboxInterface
 ```
+
+The mod also requires [OpenStarbound](https://github.com/OpenStarbound/OpenStarbound) for processing.
 
 ## ✨ Features
 

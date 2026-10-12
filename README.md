@@ -59,12 +59,15 @@ local textbox = Textbox:setup("widgetName", {
     onChanged = function(text)
         sb.logInfo("Text changed: %s", text)
     end,
+    withVanilaCallbacks = true, -- triggers game engine system callback, but need __tbxCallback defined in `scriptWidgetCallbacks` to work
     onEnterKey = function()
         sb.logInfo("Enter key pressed")
     end,
+    withEnterCallbacks = true, -- triggers game engine system callback, but need __tbxEnterKey defined in `scriptWidgetCallbacks` to work
     onEscapeKey = function()
         sb.logInfo("Escape key pressed")
     end,
+    withEscapeCallbacks = true, -- triggers game engine system callback, but need __tbxEscapeKey defined in `scriptWidgetCallbacks` to work
     maxHeight = 120, -- Turns on the dynamic height functionality
     onSizeChange = function(newSize)
         sb.logInfo("Textbox changed size")

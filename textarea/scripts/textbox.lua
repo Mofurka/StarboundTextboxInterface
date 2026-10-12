@@ -29,6 +29,12 @@ end
 
 -- ─────────────────────────── constants ───────────────────────────────────────
 
+local SYSTEM_CALLBACKS = {
+    onChanged = "__tbxCallback",
+    onEnterKey = "__tbxEnterKey",
+    onEscapeKey = "__tbxEscapeKey",
+}
+
 local WIDGET_SHORTS = {
     textCanvas = "_",
     caretCanvas = "__",
@@ -259,6 +265,13 @@ Textbox = {
     _childrenRect = { 0, 0 },
     _paneFeature = {},
 
+
+    withVanilaCallbacks = false,
+    withEscapeCallbacks = false,
+    withEnterCallbacks = false,
+    _inWidgetTextCallback = false,
+    _fakeNewlineFromCallback = false,
+
     caretDirty = true
 }
 Textbox.__index = Textbox
@@ -293,6 +306,9 @@ end
 ---@field unfocusOnClickOutside boolean? - whether the textbox should lose focus when the user clicks outside of it. Default is true.
 ---@field textFont string?
 ---@field scroll TextboxScrollConfig?
+---@field withVanilaCallbacks boolean?
+---@field withEnterCallbacks boolean?
+---@field withEscapeCallbacks boolean?
 
 ---@public
 ---@param widgetName string can be nil
@@ -309,6 +325,9 @@ function Textbox:setup(widgetName, options)
     inst.onChanged = options.onChanged
     inst.onEnterKey = options.onEnterKey
     inst.onEscapeKey = options.onEscapeKey
+    inst.withVanilaCallbacks = options.withVanilaCallbacks or false
+    inst.withEnterCallbacks = options.withEnterCallbacks or false
+    inst.withEscapeCallbacks = options.withEscapeCallbacks or false
     inst.maxHeight = options.maxHeight
     inst.onSizeChange = options.onSizeChange
     inst.tabSpaces = options.tabInsertText or inst.tabSpaces
@@ -373,13 +392,8 @@ function Textbox:setup(widgetName, options)
     }, WIDGET_SHORTS.caretCanvas)
     inst.caretCanvasPath = lytPath .. dotWidget(WIDGET_SHORTS.caretCanvas)
 
-    -- Fake textbox for input capture
-    widget.addChild(lytPath, {
-        type = "textbox", position = { -1000, -1000 }, maxWidth = 200,
-        textAlign = "left", callback = "null", enterKey = "null",
-        escapeKey = "null", regex = "[\\s\\S]*"
-    }, WIDGET_SHORTS.fakeTextbox)
-    inst.fakeTextbox = lytPath .. dotWidget(WIDGET_SHORTS.fakeTextbox)
+    inst:_createFakeTextbox()
+
 
     -- Bind canvases
     inst.textCanvas = widget.bindCanvas(inst.textCanvasPath)
@@ -1899,7 +1913,11 @@ function Textbox:_processInput(dt, events, mousePos)
     self.caretTimer = self.caretTimer + dt
     self._doubleClickTimer = math.max(0, (self._doubleClickTimer or 0) - dt)
     -- TODO(nightly): reset the shif + enter antidupe flag each frame.
-    self._fakeInsertedNewline = false
+    if self._fakeNewlineFromCallback then
+        self._fakeNewlineFromCallback = false
+    else
+        self._fakeInsertedNewline = false
+    end
 
     if self.caretTimer >= CARET_BLINK_INTERVAL then
         self.caretTimer = self.caretTimer - CARET_BLINK_INTERVAL
@@ -2337,6 +2355,121 @@ function Textbox:_processMouseEvents(events, mouseScreen)
     end
 end
 
+-- ─────────────────────────── vanila widget calbacks ───────────────────────
+---@protected
+---@return boolean
+function Textbox:_usesWidgetCallbacks()
+    return self.withVanilaCallbacks or self.withEnterCallbacks or self.withEscapeCallbacks
+end
+
+---@param widgetData any
+---@return Textbox?
+local function textboxFromCallback(widgetData)
+    local inst = activeTextboxes[widgetData]
+    if inst and inst.setupDone then
+        return inst
+    end
+    return nil
+end
+
+---@protected
+function Textbox:_createFakeTextbox()
+    local cfg = {
+        type = "textbox",
+        position = { -1000, -1000 },
+        maxWidth = 200,
+        textAlign = "left",
+        callback = "null",
+        enterKey = "null",
+        escapeKey = "null",
+        regex = "[\\s\\S]*",
+    }
+    if self:_usesWidgetCallbacks() then
+        cfg.data = self.uuid
+    end
+
+    if self.withVanilaCallbacks then
+        cfg.callback = SYSTEM_CALLBACKS.onChanged
+
+        _ENV[SYSTEM_CALLBACKS.onChanged] = function(_, widgetData)
+            local inst = textboxFromCallback(widgetData)
+            if inst then
+                inst:_handleWidgetTextInput()
+            end
+        end
+
+    end
+    if self.withEnterCallbacks then
+        cfg.enterKey = SYSTEM_CALLBACKS.onEnterKey
+
+        _ENV[SYSTEM_CALLBACKS.onEnterKey] = function(_, widgetData)
+            local inst = textboxFromCallback(widgetData)
+            if inst then
+                inst:_handleWidgetEnterKey()
+            end
+        end
+
+    end
+    if self.withEscapeCallbacks then
+        cfg.escapeKey = SYSTEM_CALLBACKS.onEscapeKey
+
+        _ENV[SYSTEM_CALLBACKS.onEscapeKey] = function(_, widgetData)
+            local inst = textboxFromCallback(widgetData)
+            if inst then
+                inst:_handleWidgetEscapeKey()
+            end
+        end
+    end
+
+    widget.addChild(self.path, cfg, WIDGET_SHORTS.fakeTextbox)
+    self.fakeTextbox = self.path .. dotWidget(WIDGET_SHORTS.fakeTextbox)
+end
+
+---@protected
+function Textbox:_handleWidgetTextInput()
+    if self._inWidgetTextCallback then
+        return
+    end
+
+    self._inWidgetTextCallback = true
+    self:_pollFakeTextbox()
+    self._inWidgetTextCallback = false
+
+    if self._fakeInsertedNewline then
+        self._fakeNewlineFromCallback = true
+    end
+end
+
+---@protected
+function Textbox:_handleWidgetEnterKey()
+    if self._fakeTextboxPasteCoroutine then
+        return
+    end
+
+    self._fakeInsertedNewline = false
+    self:_handleWidgetTextInput()
+
+    if self._fakeTextboxPasteCoroutine then
+        return
+    end
+
+    if input.key(KEYS.LShift) or input.key(KEYS.RShift) then
+        -- TODO(osb-nightly): не забыть доделать T_T
+        if not self._fakeInsertedNewline then
+            self:_insertText("\n")
+        end
+    elseif self.onEnterKey then
+        self.onEnterKey()
+    end
+end
+
+---@protected
+function Textbox:_handleWidgetEscapeKey()
+    if self.onEscapeKey then
+        self.onEscapeKey()
+    end
+end
+
 ---@protected
 function Textbox:_pollFakeTextbox()
     if not self.fakeTextbox then
@@ -2466,6 +2599,9 @@ local KEY_DISPATCH = {
     end,
     ---@param self Textbox
     [KEYS.Return] = function(self, _, shift)
+        if self.withEnterCallbacks then
+            return
+        end
         if shift then
             -- TODO(osb-nightly): on nightly OSB the fakeTextbox already inserted
             if not self._fakeInsertedNewline then
@@ -2477,8 +2613,11 @@ local KEY_DISPATCH = {
     end,
     ---@param self Textbox
     [KEYS.Escape] = function(self, _, _)
+        if self.withEscapeCallbacks then
+            return
+        end
         if self.onEscapeKey then
-            self:onEscapeKey()
+            self.onEscapeKey()
         end
     end,
     ---@param self Textbox

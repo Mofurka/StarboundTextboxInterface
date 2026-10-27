@@ -301,7 +301,7 @@ end
 ---@field tabInsertText string?
 ---@field scrollLinesPerWheel number?
 ---@field maxHeight number?
----@field onSizeChange fun(newHeight: number[] {width, height})?
+---@field onSizeChange fun(newHeight: number[] - {width, height})?
 ---@field screenOffset number[]? {x, y} - relative to the widget rect, for example {0, -10} would move the text 10 pixels up from the bottom of the widget
 ---@field unfocusOnClickOutside boolean? - whether the textbox should lose focus when the user clicks outside of it. Default is true.
 ---@field textFont string?

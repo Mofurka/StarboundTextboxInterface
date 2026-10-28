@@ -54,7 +54,7 @@ require("/interface/StarboundTextboxInterface/combobox/scripts/combobox.lua")
 ---@class MarkdownParser
 ---@field scrollConfig MarkdownParserScrollConfig
 MarkdownParser = {
-    renders = {},      -- id -> { text, tokens, contentH, offsetY }
+    renders = {},      -- id -> { text, tokens, contentH, offsetY, metadata }
     blocks = {},       -- ordered list of block IDs on this instance
     scroll = 0,
     totalH = 0,
@@ -1286,10 +1286,10 @@ end
 -- ─────────────────────────── Public API ──────────────────────────────────────
 
 ---@param text    string markdown source text
----@param options table? reserved for future use
+---@param metadata any? reserved for future use
 ---@return number blockID (positive integer; -1 on error)
-function MarkdownParser:render(text, options)
-    options = options or {}
+function MarkdownParser:render(text, metadata)
+    metadata = metadata or {}
     if type(text) == "table" then
         text = table.concat(text, "\n")
     end
@@ -1311,6 +1311,7 @@ function MarkdownParser:render(text, options)
 
     self.renders[id] = {
         text = text,
+        metadata = metadata,
         tokens = tokens,
         contentH = self:_calcContentHeight(tokens, cw),
         offsetY = 0 -- set by _recalc below
@@ -1356,6 +1357,11 @@ end
 function MarkdownParser:getText(id)
     local r = self.renders[id]
     return r and r.text
+end
+
+function MarkdownParser:getMetadata(id)
+    local r = self.renders[id]
+    return r and r.metadata
 end
 
 function MarkdownParser:setBlockSeparatorLine(line)

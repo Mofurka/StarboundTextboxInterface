@@ -62,7 +62,8 @@ Combobox = {
     end,
     onOpen = function()
     end,
-    backgroundImage = nil -- must be provided
+    backgroundImage = nil, -- must be provided
+    size = nil -- popup size, set on creation
 }
 
 local comboboxes = {}
@@ -99,7 +100,33 @@ end
 ---@field onClose function - Callback function when the combobox is closed
 ---@field onOpen function - Callback function when the combobox is opened
 ---@field sortKeys boolean - Whether to sort the table keys
+---@field zlevel number - Z-level of the popup widget
 
+
+local function prepareOptions(options)
+    local filterEnabled = not not options.filter
+    -- Backward capability
+    if type(options.filter) == "boolean" then
+        options.filter = {}
+    end
+
+    options.filter = sb.jsonMerge(DEFAULT_FILTER, options.filter or {})
+    options.listSchema = sb.jsonMerge(DEFAULT_SCHEMA, options.listSchema or {})
+    options.scrollArea = sb.jsonMerge(DEFAULT_SCROLL_AREA, options.scrollArea or {})
+
+    return filterEnabled
+end
+
+local function normalizeValues(values)
+    for k, v in ipairs(values or {}) do
+        values[k] = nil
+        if type(v) == "table" and v.name then
+            values[v.name] = v
+        else
+            values[v or k] = v
+        end
+    end
+end
 
 --- Bind a combobox to a button widget
 ---@param widgetName string - The name of the button widget to bind the combobox to
@@ -120,28 +147,56 @@ function Combobox:bind(widgetName, values, onSelect, options)
         return nil
     end
 
-    local filterEnabled = not not options.filter
+    local filterEnabled = prepareOptions(options)
+    normalizeValues(values)
 
-    -- Backward capability
-    if type(options.filter) == "boolean" then
-        options.filter = {}
+    local isChild = widgetName:find("%.")
+    local childWidgetName = widgetName:match("([^%.]+)$")
+    local parentWidgetName = isChild and widgetName:match("(.+)%..+") or nil
+
+    local jsonPath = isChild and widgetName:gsub("%.", ".children.") or widgetName
+    widgetConfig = sb.jsonQuery(config.getParameter("gui"), jsonPath)
+
+    local wrapperListPosition = vec2.add(widget.getPosition(widgetName), options.offset or {0, widget.getSize(widgetName)[2]})
+
+    -- Remove old widget
+    if isChild then
+        widget.removeChild(parentWidgetName, childWidgetName)
+    else
+        pane.removeWidget(childWidgetName)
     end
 
-    options.filter = sb.jsonMerge(DEFAULT_FILTER, options.filter or {})
-    options.listSchema = sb.jsonMerge(DEFAULT_SCHEMA, options.listSchema or {})
-    options.scrollArea = sb.jsonMerge(DEFAULT_SCROLL_AREA, options.scrollArea or {})
+    -- Setup combobox config
+    widgetConfig.data = widgetConfig.data or {}
+    widgetConfig.data.comboboxData = {
+        name = childWidgetName,
+        parentWidgetName = parentWidgetName,
+        values = values,
+        defaultValue = options.defaultValue
+    }
 
-    -- Reformat values to a table if it's an array
-    for k, v in ipairs(values or {}) do
-        values[k] = nil
-        -- If v is an object with a name field, use it as-is; otherwise wrap it as a simple string value
-        if type(v) == "table" and v.name then
-            values[v.name] = v
-        else
-            values[v or k] = v
-        end
+    if isChild then
+        widget.addChild(parentWidgetName, widgetConfig, childWidgetName)
+    else
+        pane.addWidget(widgetConfig, widgetName)
     end
 
+    return self:_createPopup(childWidgetName, widgetName, parentWidgetName, wrapperListPosition, values, onSelect, options, filterEnabled)
+end
+
+---@return Combobox
+function Combobox:create(name, parentWidgetName, position, values, onSelect, options)
+    options = options or {}
+
+    local filterEnabled = prepareOptions(options)
+    normalizeValues(values)
+
+    local fullName = parentWidgetName and widgetPath(parentWidgetName, name) or name
+    return self:_createPopup(name, fullName, parentWidgetName, position, values, onSelect, options, filterEnabled)
+end
+
+---@return Combobox
+function Combobox:_createPopup(name, fullName, parentWidgetName, position, values, onSelect, options, filterEnabled)
     local backgroundImage = options.background or (filterEnabled and DEFAULT_SCHEMA.backgroundFilter or DEFAULT_SCHEMA.background)
     local backgroundSize = root.imageSize(backgroundImage)
 
@@ -192,32 +247,6 @@ function Combobox:bind(widgetName, values, onSelect, options)
         }
     }
 
-    local isChild = widgetName:find("%.")
-    local childWidgetName = widgetName:match("([^%.]+)$")
-    local parentWidgetName = isChild and widgetName:match("(.+)%..+") or nil
-    local parentFullWidgetName = parentWidgetName
-
-    local jsonPath = isChild and widgetName:gsub("%.", ".children.") or widgetName
-    widgetConfig = sb.jsonQuery(config.getParameter("gui"), jsonPath)
-
-    local wrapperListPosition = vec2.add(widget.getPosition(widgetName), options.offset or {0, widget.getSize(widgetName)[2]})
-    
-    -- Remove old widget
-    if isChild then
-        widget.removeChild(parentWidgetName, childWidgetName)
-    else
-        pane.removeWidget(childWidgetName)
-    end
-
-    -- Setup combobox config
-    widgetConfig.data = widgetConfig.data or {}
-    widgetConfig.data.comboboxData = {
-        name = childWidgetName,
-        parentWidgetName = parentWidgetName,
-        values = values,
-        defaultValue = options.defaultValue
-    }
-
     -- Add optional filter
     if filterEnabled then
         layoutTemplate.children["textComboboxFilter"] = {
@@ -229,7 +258,7 @@ function Combobox:bind(widgetName, values, onSelect, options)
             zlevel = 4,
             data = {
                 comboboxData = {
-                    name = childWidgetName,
+                    name = name,
                     parentWidgetName = parentWidgetName
                 }
             }
@@ -238,9 +267,10 @@ function Combobox:bind(widgetName, values, onSelect, options)
 
     local wrapperListTemplate = {
         type = "list",
-        position = wrapperListPosition,
+        position = position,
         callback = "null",
         visible = false,
+        zlevel = options.zlevel,
         schema = {
             spacing = {0, 0},
             memberSize = backgroundSize,
@@ -251,34 +281,32 @@ function Combobox:bind(widgetName, values, onSelect, options)
         }
     }
 
-    local wrapperName = WIDGET_NAME.wrapper .. childWidgetName
+    local wrapperName = WIDGET_NAME.wrapper .. name
 
-    -- Add new widgets
-    if isChild then
-        widget.addChild(parentWidgetName, widgetConfig, childWidgetName)
+    if parentWidgetName then
         widget.addChild(parentWidgetName, wrapperListTemplate, wrapperName)
     else
-        pane.addWidget(widgetConfig, widgetName)
         pane.addWidget(wrapperListTemplate, wrapperName)
     end
 
     -- Create and store combobox
-    local wrapperFullPath = parentFullWidgetName and widgetPath(parentFullWidgetName, wrapperName) or wrapperName
+    local wrapperFullPath = parentWidgetName and widgetPath(parentWidgetName, wrapperName) or wrapperName
 
     local cb = self:_new(wrapperFullPath, onSelect, values, options.defaultValue, options.onClose, options.onOpen, options.sortKeys)
     cb.wrapperName = wrapperName
     cb.parentWidgetName = parentWidgetName
+    cb.size = backgroundSize
     comboboxes[wrapperFullPath] = cb
 
     -- Create list item and register the callbacks
     widget.registerMemberCallback(wrapperFullPath, "comboboxSelect", function()
-        
+
         local innerListPath = widgetPath(wrapperFullPath, cb.li, WIDGET_NAME.layout, WIDGET_NAME.scrollArea, WIDGET_NAME.list)
         local li = widget.getListSelected(innerListPath)
         if li then
             local itemData = widget.getData(widgetPath(innerListPath, li))
             local displayText = widget.getText(widgetPath(innerListPath, li, "option"))
-  
+
             if onSelect then
                 cb.onSelect(displayText, itemData)
             end
@@ -297,7 +325,7 @@ function Combobox:bind(widgetName, values, onSelect, options)
 
     widget.setData(widgetPath(wrapperFullPath, cb.li, WIDGET_NAME.layout, WIDGET_NAME.scrollArea, WIDGET_NAME.list), {
         comboboxData = {
-            name = widgetName,
+            name = fullName,
             parentWidgetName = parentWidgetName
         }
     })
@@ -371,6 +399,14 @@ function Combobox:open()
     if self.onOpen then
         self.onOpen()
     end
+end
+
+function Combobox:isOpen()
+    return widget.active(self.widgetName)
+end
+
+function Combobox:setPosition(position)
+    widget.setPosition(self.widgetName, position)
 end
 
 function Combobox:setSelected(value)

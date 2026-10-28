@@ -35,11 +35,10 @@ function init()
 end
 
 function update(dt)
-
     if oldUpdate then
         oldUpdate(dt)
     end
-    MarkdownParser.update(dt)
+    MarkdownParser.updateAll(dt)
 end
 
 function uninit()
@@ -51,18 +50,19 @@ end
 
 require("/scripts/utils/utf8.lua")
 require("/scripts/vec2.lua")
+require("/interface/StarboundTextboxInterface/combobox/scripts/combobox.lua")
 ---@class MarkdownParser
 ---@field scrollConfig MarkdownParserScrollConfig
 MarkdownParser = {
-    renders = {}, -- id -> { tokens, contentH, offsetY }
-    blocks = {}, -- ordered list of block IDs on this instance
+    renders = {},      -- id -> { text, tokens, contentH, offsetY }
+    blocks = {},       -- ordered list of block IDs on this instance
     scroll = 0,
     totalH = 0,
     nextId = 1,
     measureWidget = "_md_sz",
     measureCache = {},
     setupDone = false,
-    textCanvas = nil, -- canvas used for rendering text
+    textCanvas = nil,  -- canvas used for rendering text
     mouseCanvas = nil, -- canvas used for mouse event capture (captureMouseEvents)
     thumbCanvas = nil, -- canvas used for drawing scrollbar thumb when scroll buttons are held
 
@@ -87,21 +87,32 @@ MarkdownParser = {
 
     _screenOffset = { 0, 0 },
     _paneFeature = {},
+
+    _contextMenu = nil,
+    _contextMenuItems = nil,
+    _contextMenuOnSelect = nil,
+    _contextMenuBlock = nil,
+    _contextMenuRect = nil
 }
 MarkdownParser.__index = MarkdownParser
 
 -- ─────────────────────────── Constants ───────────────────────────────────────
 
-
-local FONT_SIZE = {
-    h1 = 16, h2 = 14, h3 = 12, h4 = 10, h5 = 9, h6 = 8,
-    p = 8, li = 8, code_block = 8, table_cell = 7,
-}
+local FONT_SIZE = { h1 = 16, h2 = 14, h3 = 12, h4 = 10, h5 = 9, h6 = 8, p = 8, li = 8, code_block = 8, table_cell = 7 }
 
 local LINE_HEIGHT = {
-    h1 = 20, h2 = 18, h3 = 16, h4 = 14, h5 = 12, h6 = 11,
-    p = 12, li = 12, code_block = 11,
-    hr = 4, blank = 7, table_row = 14,
+    h1 = 20,
+    h2 = 18,
+    h3 = 16,
+    h4 = 14,
+    h5 = 12,
+    h6 = 11,
+    p = 12,
+    li = 12,
+    code_block = 11,
+    hr = 4,
+    blank = 7,
+    table_row = 14
 }
 
 local PARAGRAPH_GAP = 3
@@ -125,7 +136,7 @@ local COLOR = {
     table_header_bg = { 40, 40, 60, 220 },
     table_row_bg = { 20, 20, 30, 180 },
     table_text = { 255, 255, 255, 255 },
-    table_header_text = { 255, 255, 255, 255 },
+    table_header_text = { 255, 255, 255, 255 }
 }
 
 local INDENT_PX = 10
@@ -136,16 +147,23 @@ local QUOTE_BAR_W = 3
 local DEBUG = false
 
 local WIDGET_SHORTS = {
-    lyt = "__md_lyt_", -- + uuid
+    lyt = "__md_lyt_",          -- + uuid
     scrollArea = "__md_sa_",
     textCanvas = "__md_cv_txt",
     mouseCanvas = "__md_cv_ms",
     thumbCanvas = "__md_cv_sb",
     measureLabel = "___md_sz_", -- + uuid
+    contextMenu = "__md_ctx"
 }
+
+local CONTEXT_MENU_ZLEVEL = 100
 
 local function dotWidget(name)
     return "." .. name
+end
+
+local function widgetExists(name)
+    return type(name) == "string" and name ~= "" and widget.getSize(name) ~= nil
 end
 
 local function logInfo(msg, ...)
@@ -154,7 +172,7 @@ local function logInfo(msg, ...)
     end
 end
 
----@param key string
+---@param key          string
 ---@param formatString string
 ---@param formatValues any
 local function logMap(key, formatString, formatValues)
@@ -263,12 +281,7 @@ local function lex(text)
             end
 
             if #header > 0 and #rows > 0 then
-                tokens[#tokens + 1] = {
-                    type = "table",
-                    header = header,
-                    alignments = alignments,
-                    rows = rows
-                }
+                tokens[#tokens + 1] = { type = "table", header = header, alignments = alignments, rows = rows }
             end
 
             tableLines = {}
@@ -282,10 +295,10 @@ local function lex(text)
             flushQuote()
             flushTable()
             if inCode then
-                inCode = false;
+                inCode = false
                 flushCode()
             else
-                inCode = true;
+                inCode = true
                 codeLang = fence
             end
         elseif inCode then
@@ -316,7 +329,11 @@ local function lex(text)
                         local indent = #(line:match("^(%s*)") or "")
                         local num = line:match("^%s*(%d+)%.")
                         local content = line:match("^%s*%d+%.%s+(.+)$")
-                        tokens[#tokens + 1] = { type = "li", text = num .. ". " .. content, indent = math.floor(indent / 2) }
+                        tokens[#tokens + 1] = {
+                            type = "li",
+                            text = num .. ". " .. content,
+                            indent = math.floor(indent / 2)
+                        }
                     elseif line:match("^%s*[-*_][%s%-*_]*$") and #line:gsub("[%s%-*_]", "") == 0 and #line >= 3 then
                         tokens[#tokens + 1] = { type = "hr" }
                     elseif line:match("^%s*$") then
@@ -371,8 +388,8 @@ end
 
 -- ─────────────────────────── Setup / factory ─────────────────────────────────
 ---@class MarkdownParserOptions
----@field rect RectI?  Optional {x1,y1,x2,y2} rect for the canvases. By default they will be sized to fill the parent widget.
----@field screenOffset number[]?  {x, y} nudge (in unscaled UI pixels) applied when converting the global mouse into local coordinates. Default {0, 0}.
+---@field rect         RectI?    Optional {x1,y1,x2,y2} rect for the canvases. By default they will be sized to fill the parent widget.
+---@field screenOffset number[]? {x, y} nudge (in unscaled UI pixels) applied when converting the global mouse into local coordinates. Default {0, 0}.
 
 
 ---@param widgetName string   full widget path to use as parent for the canvases
@@ -384,7 +401,7 @@ function MarkdownParser:setup(widgetName, options)
     local instance = MarkdownParser.new()
     instance.setupDone = true
 
-    local isChild = widgetName:find("%.") ~= nil
+    local isChild = widgetExists(widgetName)
 
     local lytShort = WIDGET_SHORTS.lyt .. instance.uuid
     local scrollShort = WIDGET_SHORTS.scrollArea
@@ -395,18 +412,21 @@ function MarkdownParser:setup(widgetName, options)
 
     if options.rect then
         rect = options.rect
-    elseif not isChild then
+    elseif isChild then
         local sz = widget.getSize(widgetName)
         rect = { 0, 0, sz[1], sz[2] }
     else
         rect = { 0, 0, 200, 200 }
-        logInfo("Warning: No rect provided for MarkdownParser setup and parent is a child widget. Defaulting to {0,0,200,200}. This may cause rendering issues if the parent widget is smaller than this size. Consider providing a rect option or using a non-child parent widget.")
+        logInfo(
+            "Warning: No rect provided for MarkdownParser setup and widget '%s' does not exist. Defaulting to {0,0,200,200} on the pane. Consider providing a rect option or the name of an existing widget.",
+            tostring(widgetName)
+        )
     end
 
     local lytPath = isChild and (widgetName .. "." .. lytShort) or lytShort
-    pcall(function()
+    pcall(function ()
         if isChild then
-            widget.removeChild(widgetName, lytPath)
+            widget.removeChild(widgetName, lytShort)
             logInfo("Removed existing child widget at %s.%s", widgetName, lytShort)
         else
             pane.removeWidget(lytPath)
@@ -414,11 +434,7 @@ function MarkdownParser:setup(widgetName, options)
         end
     end)
 
-    local lytConfig = {
-        type = "layout",
-        rect = rect,
-        layoutType = "basic"
-    }
+    local lytConfig = { type = "layout", rect = rect, layoutType = "basic" }
 
     if isChild then
         widget.addChild(widgetName, lytConfig, lytShort)
@@ -431,11 +447,11 @@ function MarkdownParser:setup(widgetName, options)
         0,
         0,
         sz[1] - 20, -- adjust for scrollbar width. Ill use this space for buttons
-        sz[2] - 1 -- adjust for scroll rect, so it will no slip through when fully scrolled down
+        sz[2] - 1   -- adjust for scroll rect, so it will no slip through when fully scrolled down
     }
     instance.rect = { 0, 0, sz[1], sz[2] } -- the full area including scroll buttons, used for mouse event capture and scroll calculations
 
-    instance.parentWidgetPath = widgetName
+    instance.parentWidgetPath = isChild and widgetName or nil
     instance._isChild = isChild
     instance._screenOffset = options.screenOffset or { 0, 0 }
     instance._paneFeature = MarkdownParser.findPaneFeature()
@@ -459,7 +475,7 @@ function MarkdownParser:setup(widgetName, options)
         rect = instance.rect,
         zlevel = 10,
         captureMouseEvents = true,
-        captureKeyboardEvents = false,
+        captureKeyboardEvents = false
     }
 
     widget.addChild(lytPath, textCanvasCfg, textShort)
@@ -483,17 +499,16 @@ function MarkdownParser:setup(widgetName, options)
 end
 
 ---@class MarkdownParserScrollConfig
----@field scrollEnabled boolean?  whether to enable scrolling. Default is false.
----@field scrollWidth number?  width in pixels of the scrollbar strip on the right. Default is 8.
----@field upButtonImage string?  path to image for the up scroll button. Default is "/interface/scrollarea/varrow-forward.png".
----@field upButtonHoverImage string?  path to image for the up scroll button when hovered. Default is "/interface/scrollarea/varrow-forwardhover.png".
----@field downButtonImage string?  path to image for the down scroll button. Default is "/interface/scrollarea/varrow-backward.png".
----@field downButtonHoverImage string?  path to image for the down scroll button when hovered. Default is "/interface/scrollarea/varrow-backwardhover.png".
----@field scrollThumbColor Color?  color of the scrollbar thumb. Default is {100, 100, 120, 220}.
----@field scrollThumbHoverColor Color?  color of the scrollbar thumb when hovered or dragged. Default is {150, 155, 175, 255}.
----@field scrollTrackColor Color?  color of the scrollbar track. Default is {15, 15, 25, 200}.
----@field scrollButtonSpeed number?  speed in pixels per second when scroll buttons are held. Default is 160.
-
+---@field scrollEnabled         boolean? whether to enable scrolling. Default is false.
+---@field scrollWidth           number?  width in pixels of the scrollbar strip on the right. Default is 8.
+---@field upButtonImage         string?  path to image for the up scroll button. Default is "/interface/scrollarea/varrow-forward.png".
+---@field upButtonHoverImage    string?  path to image for the up scroll button when hovered. Default is "/interface/scrollarea/varrow-forwardhover.png".
+---@field downButtonImage       string?  path to image for the down scroll button. Default is "/interface/scrollarea/varrow-backward.png".
+---@field downButtonHoverImage  string?  path to image for the down scroll button when hovered. Default is "/interface/scrollarea/varrow-backwardhover.png".
+---@field scrollThumbColor      Color?   color of the scrollbar thumb. Default is {100, 100, 120, 220}.
+---@field scrollThumbHoverColor Color?   color of the scrollbar thumb when hovered or dragged. Default is {150, 155, 175, 255}.
+---@field scrollTrackColor      Color?   color of the scrollbar track. Default is {15, 15, 25, 200}.
+---@field scrollButtonSpeed     number?  speed in pixels per second when scroll buttons are held. Default is 160.
 
 ---@param scrollConfig MarkdownParserScrollConfig?
 function MarkdownParser:setupScroll(scrollConfig)
@@ -527,7 +542,6 @@ function MarkdownParser:setupScroll(scrollConfig)
     self.thumbCanvas = widget.bindCanvas(thumbPath)
     self:_drawScrollbar()
 end
-
 
 ---@return WidgetPaneFeature?
 function MarkdownParser.findPaneFeature()
@@ -633,12 +647,7 @@ function MarkdownParser:_getWidgetScreenRect()
     local screenPos = vec2.add(anchorOffset, vec2.mul(uiPos, scale))
     local size = vec2.mul({ self.rect[3], self.rect[4] }, scale)
 
-    return {
-        screenPos[1],
-        screenPos[2],
-        screenPos[1] + size[1],
-        screenPos[2] + size[2]
-    }
+    return { screenPos[1], screenPos[2], screenPos[1] + size[1], screenPos[2] + size[2] }
 end
 
 ---@protected
@@ -651,10 +660,7 @@ function MarkdownParser:_screenToLocalMouse(mouseScreen, clampToRect)
     local widgetRect = self:_getWidgetScreenRect()
     local scale = interface.scale()
 
-    local localMouse = {
-        (mouseScreen[1] - widgetRect[1]) / scale,
-        (mouseScreen[2] - widgetRect[2]) / scale
-    }
+    local localMouse = { (mouseScreen[1] - widgetRect[1]) / scale, (mouseScreen[2] - widgetRect[2]) / scale }
 
     if clampToRect then
         localMouse[1] = math.max(0, math.min(localMouse[1], self.rect[3]))
@@ -662,12 +668,15 @@ function MarkdownParser:_screenToLocalMouse(mouseScreen, clampToRect)
     end
 
     if DEBUG then
-        logMap("_screenToLocalMouse" .. tostring(self.uuid), "%s", sb.printJson({
-            mouseScreen = mouseScreen,
-            widgetRect = widgetRect,
-            localMouse = localMouse,
-            scale = scale
-        }))
+        logMap(
+            "_screenToLocalMouse" .. tostring(self.uuid), "%s",
+            sb.printJson({
+                mouseScreen = mouseScreen,
+                widgetRect = widgetRect,
+                localMouse = localMouse,
+                scale = scale
+            })
+        )
     end
 
     return localMouse, widgetRect
@@ -711,14 +720,14 @@ function MarkdownParser:_drawScrollbar()
     local downHover = onCvs and my <= btnH
 
     canvas:drawImage(
-            upHover and self.scrollConfig.upButtonHoverImage
-                    or self.scrollConfig.upButtonImage,
-            { cw * 0.5, ch - btnH * 0.5 }, 1, nil, true)
+        upHover and self.scrollConfig.upButtonHoverImage or self.scrollConfig.upButtonImage,
+        { cw * 0.5, ch - btnH * 0.5 }, 1, nil, true
+    )
 
     canvas:drawImage(
-            downHover and self.scrollConfig.downButtonHoverImage
-                    or self.scrollConfig.downButtonImage,
-            { cw * 0.5, btnH * 0.5 }, 1, nil, true)
+        downHover and self.scrollConfig.downButtonHoverImage or self.scrollConfig.downButtonImage,
+        { cw * 0.5, btnH * 0.5 }, 1, nil, true
+    )
 
     -- ── scrollbar thumb ───────────────────────────────────────────────────────
     local maxScroll = self:getMaxScroll()
@@ -735,7 +744,7 @@ function MarkdownParser:_drawScrollbar()
 
         local thumbHover = onCvs and my >= thumbBot and my <= thumbTop
         local col = (thumbHover or self._thumbDragging) and self.scrollConfig.scrollThumbHoverColor
-                or self.scrollConfig.scrollThumbColor
+            or self.scrollConfig.scrollThumbColor
         canvas:drawRect({ 2, thumbBot, cw - 2, thumbTop }, col)
     end
 end
@@ -788,7 +797,6 @@ function MarkdownParser:_updateScroll(dt, events)
                     self:setScroll(math.max(0, math.min(maxScroll, t * maxScroll)))
                 end
             end
-
         elseif not self._holdInitiated then
             -- ── first frame of this hold: decide what was clicked ────────────
             self._holdInitiated = true
@@ -832,7 +840,7 @@ end
 ---@protected
 ---@param text      string
 ---@param fontSize  number
----@param wrapWidth number  pixel wrap width passed to the label
+---@param wrapWidth number pixel wrap width passed to the label
 ---@return number?
 function MarkdownParser:_textHeight(text, fontSize, wrapWidth)
     if not self.setupDone then
@@ -846,16 +854,16 @@ function MarkdownParser:_textHeight(text, fontSize, wrapWidth)
     end
 
     local name = self.measureWidget
-    pcall(function()
+    pcall(function ()
         pane.removeWidget(name)
     end)
-    local ok = pcall(function()
+    local ok = pcall(function ()
         pane.addWidget({
             type = "label",
             position = { -1000, -1000 },
             fontSize = fontSize,
             wrapWidth = wrapWidth,
-            value = text,
+            value = text
         }, name)
     end)
     if not ok then
@@ -875,7 +883,7 @@ end
 --- Measure height of text, falling back to line-height × estimateLines when unavailable
 ---@param text      string
 ---@param fontSize  number
----@param lineH     number   fallback single-line height in pixels
+---@param lineH     number fallback single-line height in pixels
 ---@param wrapWidth number
 ---@return number
 function MarkdownParser:_mH(text, fontSize, lineH, wrapWidth)
@@ -901,7 +909,7 @@ end
 --- Calculate the total pixel height occupied by all tokens
 --- cw is the FULL canvas pixel width (canvas:size()[1])
 ---@param tokens table
----@param cw     number  full canvas width
+---@param cw     number full canvas width
 ---@return number
 function MarkdownParser:_calcContentHeight(tokens, cw)
     local wrapWidth = cw - PAD * 2
@@ -911,31 +919,25 @@ function MarkdownParser:_calcContentHeight(tokens, cw)
     for _, tok in ipairs(tokens) do
         if tok.type == "blank" then
             h = h + LINE_HEIGHT.blank
-
         elseif tok.type == "hr" then
             h = h + LINE_HEIGHT.hr + 4
-
         elseif tok.type:sub(1, 1) == "h" then
             local ht = tok.type
             local lh = LINE_HEIGHT[ht] or 12
             local fs = FONT_SIZE[ht] or 8
             local rendered = applyInline(tok.text)
             h = h + self:_mH(rendered, fs, lh, wrapWidth) + 2
-
         elseif tok.type == "p" then
             local rendered = applyInline(tok.text)
             h = h + self:_mH(rendered, FONT_SIZE.p, LINE_HEIGHT.p, wrapWidth) + PARAGRAPH_GAP
-
         elseif tok.type == "li" then
             local indent = (tok.indent or 0) * INDENT_PX
             local liWrap = math.max(1, wrapWidth - indent)
             local bullet = tok.text:match("^%d") and "" or "• "
             local rendered = bullet .. applyInline(tok.text)
             h = h + self:_mH(rendered, FONT_SIZE.li, LINE_HEIGHT.li, liWrap)
-
         elseif tok.type == "code_block" then
             h = h + LINE_HEIGHT.code_block * #tok.lines + 2
-
         elseif tok.type == "blockquote" then
             local innerH = 0
             for _, ql in ipairs(tok.lines) do
@@ -943,7 +945,6 @@ function MarkdownParser:_calcContentHeight(tokens, cw)
                 innerH = innerH + self:_mH(rendered, FONT_SIZE.p, LINE_HEIGHT.p, quoteWrap)
             end
             h = h + innerH + 4
-
         elseif tok.type == "table" then
             local numRows = #tok.rows + 1
             h = h + numRows * LINE_HEIGHT.table_row + 4
@@ -955,7 +956,7 @@ end
 ---@protected
 function MarkdownParser:_recalc()
     if #self.blocks == 0 then
-        self.totalH = 0;
+        self.totalH = 0
         return
     end
     local y = PAD
@@ -974,10 +975,10 @@ end
 ---@protected
 ---@param canvas CanvasWidget
 ---@param tokens table
----@param baseY  number  vertical offset of the top of the block relative to the top of the canvas. This is used to calculate the Y coordinate for each line and determine if it is
----@param cw     number  full canvas width (canvas:size()[1])
----@param ch     number  full canvas height (canvas:size()[2])
----@param scroll number  current scroll offset in pixels
+---@param baseY  number       vertical offset of the top of the block relative to the top of the canvas. This is used to calculate the Y coordinate for each line and determine if it is
+---@param cw     number       full canvas width (canvas:size()[1])
+---@param ch     number       full canvas height (canvas:size()[2])
+---@param scroll number       current scroll offset in pixels
 function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
     local wrapWidth = cw - PAD * 2
     local quoteWrap = math.max(1, wrapWidth - QUOTE_PAD_LEFT)
@@ -992,10 +993,8 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
     local contentY = 0
 
     for _, tok in ipairs(tokens) do
-
         if tok.type == "blank" then
             contentY = contentY + LINE_HEIGHT.blank
-
         elseif tok.type == "hr" then
             contentY = contentY + 2
             local ty = toY(contentY)
@@ -1003,7 +1002,6 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
                 canvas:drawLine({ PAD, ty }, { cw - PAD, ty }, COLOR.hr, 1)
             end
             contentY = contentY + LINE_HEIGHT.hr + 2
-
         elseif tok.type:sub(1, 1) == "h" then
             local ht = tok.type
             local lh = LINE_HEIGHT[ht] or 12
@@ -1018,11 +1016,11 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
                     position = { PAD, ty },
                     horizontalAnchor = "left",
                     verticalAnchor = "top",
-                    wrapWidth = wrapWidth,
-                }, fs, color)
+                    wrapWidth = wrapWidth
+                }, fs, color
+                )
             end
             contentY = contentY + totalH
-
         elseif tok.type == "p" then
             local rendered = applyInline(tok.text)
             local textH = self:_mH(rendered, FONT_SIZE.p, LINE_HEIGHT.p, wrapWidth)
@@ -1034,11 +1032,11 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
                     position = { PAD, ty },
                     horizontalAnchor = "left",
                     verticalAnchor = "top",
-                    wrapWidth = wrapWidth,
-                }, FONT_SIZE.p, COLOR.p)
+                    wrapWidth = wrapWidth
+                }, FONT_SIZE.p, COLOR.p
+                )
             end
             contentY = contentY + totalH
-
         elseif tok.type == "li" then
             local indent = (tok.indent or 0) * INDENT_PX
             local liWrap = math.max(1, wrapWidth - indent)
@@ -1052,11 +1050,11 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
                     position = { PAD + indent, ty },
                     horizontalAnchor = "left",
                     verticalAnchor = "top",
-                    wrapWidth = liWrap,
-                }, FONT_SIZE.li, COLOR.li)
+                    wrapWidth = liWrap
+                }, FONT_SIZE.li, COLOR.li
+                )
             end
             contentY = contentY + totalH
-
         elseif tok.type == "code_block" then
             local blockH = LINE_HEIGHT.code_block * #tok.lines + 2
             local blockTop = toY(contentY)
@@ -1074,13 +1072,13 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
                         position = { PAD + 2, ty },
                         horizontalAnchor = "left",
                         verticalAnchor = "top",
-                        wrapWidth = wrapWidth - 4,
-                    }, FONT_SIZE.code_block, COLOR.code_text)
+                        wrapWidth = wrapWidth - 4
+                    }, FONT_SIZE.code_block, COLOR.code_text
+                    )
                 end
                 contentY = contentY + LINE_HEIGHT.code_block
             end
             contentY = contentY + 1
-
         elseif tok.type == "blockquote" then
             local lineHeights = {}
             local innerH = 0
@@ -1112,13 +1110,13 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
                         position = { PAD + QUOTE_PAD_LEFT, ty },
                         horizontalAnchor = "left",
                         verticalAnchor = "top",
-                        wrapWidth = quoteWrap,
-                    }, FONT_SIZE.p, COLOR.quote_text)
+                        wrapWidth = quoteWrap
+                    }, FONT_SIZE.p, COLOR.quote_text
+                    )
                 end
                 contentY = contentY + lineH
             end
             contentY = contentY + 2
-
         elseif tok.type == "table" then
             local numCols = #tok.header
             local numRows = #tok.rows + 1 -- +1 for header
@@ -1190,8 +1188,9 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
                         position = { xPos, toY(cellY) },
                         horizontalAnchor = anchor,
                         verticalAnchor = "top",
-                        wrapWidth = colWidth - 4,
-                    }, FONT_SIZE.table_cell, COLOR.table_header_text)
+                        wrapWidth = colWidth - 4
+                    }, FONT_SIZE.table_cell, COLOR.table_header_text
+                    )
 
                     currentX = currentX + colWidth
                 end
@@ -1231,8 +1230,9 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
                             position = { xPos, toY(cellY) },
                             horizontalAnchor = anchor,
                             verticalAnchor = "top",
-                            wrapWidth = colWidth - 4,
-                        }, FONT_SIZE.table_cell, COLOR.table_text)
+                            wrapWidth = colWidth - 4
+                        }, FONT_SIZE.table_cell, COLOR.table_text
+                        )
 
                         currentX = currentX + colWidth
                     end
@@ -1254,8 +1254,9 @@ function MarkdownParser:_drawBlock(canvas, tokens, baseY, cw, ch, scroll)
             position = { PAD, toY(contentY) },
             horizontalAnchor = "left",
             verticalAnchor = "top",
-            wrapWidth = wrapWidth,
-        }, FONT_SIZE.p, COLOR.hr)
+            wrapWidth = wrapWidth
+        }, FONT_SIZE.p, COLOR.hr
+        )
     end
 end
 
@@ -1284,9 +1285,9 @@ end
 
 -- ─────────────────────────── Public API ──────────────────────────────────────
 
----@param text    string   markdown source text
----@param options table?   reserved for future use
----@return number  blockID  (positive integer; -1 on error)
+---@param text    string markdown source text
+---@param options table? reserved for future use
+---@return number blockID (positive integer; -1 on error)
 function MarkdownParser:render(text, options)
     options = options or {}
     if type(text) == "table" then
@@ -1309,9 +1310,10 @@ function MarkdownParser:render(text, options)
     self.nextId = self.nextId + 1
 
     self.renders[id] = {
+        text = text,
         tokens = tokens,
         contentH = self:_calcContentHeight(tokens, cw),
-        offsetY = 0, -- set by _recalc below
+        offsetY = 0 -- set by _recalc below
     }
 
     self.blocks[#self.blocks + 1] = id
@@ -1340,13 +1342,20 @@ end
 --- Use together with setScroll() to jump to a specific block:
 ---   myMd:setScroll(myMd:getScrollByBlock(id))
 ---@param id number
----@return number  offsetY of the block (pixels from the top of the content)
+---@return number offsetY of the block (pixels from the top of the content)
 function MarkdownParser:getScrollByBlock(id)
     local r = self.renders[id]
     if not r then
         return 0
     end
     return r.offsetY
+end
+
+---@param id number
+---@return string? text
+function MarkdownParser:getText(id)
+    local r = self.renders[id]
+    return r and r.text
 end
 
 function MarkdownParser:setBlockSeparatorLine(line)
@@ -1356,8 +1365,7 @@ end
 ---@return boolean
 function MarkdownParser:mouseOverWindow()
     local lm = self:_screenToLocalMouse(input.mousePosition(), false)
-    return lm[1] >= self.rect[1] and lm[1] <= self.rect[3]
-            and lm[2] >= self.rect[2] and lm[2] <= self.rect[4]
+    return lm[1] >= self.rect[1] and lm[1] <= self.rect[3] and lm[2] >= self.rect[2] and lm[2] <= self.rect[4]
 end
 
 --- Get the current scroll offset.
@@ -1387,9 +1395,12 @@ function MarkdownParser:remove(id)
     if not self.renders[id] then
         return
     end
+    if self._contextMenuBlock == id then
+        self:closeContextMenu()
+    end
     for i, bid in ipairs(self.blocks) do
         if bid == id then
-            table.remove(self.blocks, i);
+            table.remove(self.blocks, i)
             break
         end
     end
@@ -1415,6 +1426,7 @@ function MarkdownParser:update(id, text, options)
         return
     end
     local cw = self.textCanvas:size()[1]
+    r.text = text
     r.tokens = lex(text)
     r.contentH = self:_calcContentHeight(r.tokens, cw)
     self:_recalc()
@@ -1423,6 +1435,7 @@ end
 
 --- Remove all blocks and clear the canvas
 function MarkdownParser:clear()
+    self:closeContextMenu()
     self.renders = {}
     self.blocks = {}
     self.scroll = 0
@@ -1437,10 +1450,19 @@ end
 
 function MarkdownParser:destroy()
     self:clear()
-    local path = self.lytPath
-    pane.removeWidget(path)
+    self:_destroyContextMenu()
+    self:_removeLayout()
     removeParser(self.uuid)
     self = nil
+end
+
+---@protected
+function MarkdownParser:_removeLayout()
+    if self._isChild then
+        widget.removeChild(self.parentWidgetPath, WIDGET_SHORTS.lyt .. self.uuid)
+    else
+        pane.removeWidget(self.lytPath)
+    end
 end
 
 --- Force a full redraw of all blocks
@@ -1466,7 +1488,6 @@ function MarkdownParser:search(query)
                         results[#results + 1] = { id = id, line = rawLine }
                     end
                 end
-
             elseif tok.type == "blockquote" then
                 for _, rawLine in ipairs(tok.lines) do
                     local plain = stripDirectives(applyInline(rawLine))
@@ -1474,7 +1495,6 @@ function MarkdownParser:search(query)
                         results[#results + 1] = { id = id, line = rawLine }
                     end
                 end
-
             elseif tok.text then
                 local plain = stripDirectives(applyInline(tok.text))
                 if utf8.lower(plain):find(lq, 1, true) then
@@ -1487,21 +1507,199 @@ function MarkdownParser:search(query)
     return results
 end
 
+-- ─────────────────────────── Contex menu ────────────────────────────────────
 
--- ────────────────────────── Lifecycle ─────────────────────────────────────────
+---@class MarkdownContextMenuItem
+---@field name string
+---@field data any?
 
+---@param items    string | MarkdownContextMenuItem
+---@param onSelect fun(blockId: number, name: string, data: any)
+---@param options  ComboboxOptions?
+---@return boolean
+function MarkdownParser:registerContextMenu(items, onSelect, options)
+    if type(items) ~= "table" or type(onSelect) ~= "function" then
+        sb.logError(
+            "[md.lua] registerContextMenu() - expected items table and onSelect function, got %s and %s", type(items),
+            type(onSelect)
+        )
+        return false
+    end
+    if not self.lytPath then
+        sb.logError("[md.lua] registerContextMenu() called on an instance that has no layout - did you call setup()?")
+        return false
+    end
 
-function MarkdownParser.init()
-    if not pane then
-        assert(false, "MarkdownParser: init - pane API is not available. Make sure to include this script in an interface script and that it is loaded before the main script.")
+    local menuItems = {}
+    for i, item in ipairs(items) do
+        if type(item) == "table" then
+            menuItems[i] = { name = tostring(item.name), data = item.data }
+        else
+            menuItems[i] = { name = tostring(item) }
+        end
+    end
+
+    self:_destroyContextMenu()
+    self._contextMenuItems = menuItems
+    self._contextMenuOnSelect = onSelect
+    self._contextMenu = self:_createContextMenu(options)
+    return true
+end
+
+function MarkdownParser:unregisterContextMenu()
+    self:_destroyContextMenu()
+    self._contextMenuItems = nil
+    self._contextMenuOnSelect = nil
+end
+
+function MarkdownParser:closeContextMenu()
+    if self._contextMenu and self._contextMenuBlock then
+        self._contextMenu:close()
     end
 end
 
-function MarkdownParser.update(dt)
+---@protected
+---@param options ComboboxOptions?
+---@return Combobox
+function MarkdownParser:_createContextMenu(options)
+    local cbOptions = {}
+    for k, v in pairs(options or {}) do
+        cbOptions[k] = v
+    end
+    cbOptions.closeOnSelect = true
+    cbOptions.sortKeys = true
+    cbOptions.zlevel = cbOptions.zlevel or CONTEXT_MENU_ZLEVEL
+
+    local userOnClose = cbOptions.onClose
+    cbOptions.onClose = function ()
+        self._contextMenuBlock = nil
+        self._contextMenuRect = nil
+        if userOnClose then
+            userOnClose()
+        end
+    end
+
+    return Combobox:create(WIDGET_SHORTS.contextMenu, self.lytPath, { 0, 0 }, {}, function (_, itemData)
+        self:_onContextMenuSelect(itemData)
+    end, cbOptions
+    )
+end
+
+---@protected
+function MarkdownParser:_destroyContextMenu()
+    if self._contextMenu then
+        self._contextMenu:destroy()
+        self._contextMenu = nil
+    end
+end
+
+---@protected
+---@param id         number
+---@param localMouse number[]
+function MarkdownParser:_openContextMenu(id, localMouse)
+    local cb = self._contextMenu
+    local values = {}
+    for i, item in ipairs(self._contextMenuItems) do
+        values[i] = { name = item.name, data = { index = i } }
+    end
+    cb:updateValues(values)
+    local w, h = cb.size[1], cb.size[2]
+    local x = math.min(localMouse[1], self.rect[3] - w)
+    local y = localMouse[2] - h
+    if y < 0 then
+        y = math.min(localMouse[2], self.rect[4] - h)
+    end
+    x, y = math.floor(math.max(0, x)), math.floor(math.max(0, y))
+
+    cb:setPosition({ x, y })
+    self._contextMenuRect = { x, y, x + w, y + h }
+    self._contextMenuBlock = id
+    cb:open()
+end
+
+---@protected
+---@param itemData table
+function MarkdownParser:_onContextMenuSelect(itemData)
+    local id = self._contextMenuBlock
+    local index = type(itemData) == "table" and itemData.index
+    local item = id and index and self._contextMenuItems[index]
+    if item then
+        self._contextMenuOnSelect(id, item.name, item.data)
+    end
+end
+
+---@protected
+---@param localPos number[]
+---@return boolean
+function MarkdownParser:_isOverContextMenu(localPos)
+    local r = self._contextMenuRect
+    return r ~= nil and localPos[1] >= r[1] and localPos[1] <= r[3] and localPos[2] >= r[2] and localPos[2] <= r[4]
+end
+
+---@protected
+---@param localPos number[]
+---@return number? block ID
+function MarkdownParser:_blockAt(localPos)
+    if not self.textCanvas then
+        return nil
+    end
+    local sz = self.textCanvas:size()
+    local x, y = localPos[1], localPos[2]
+    if x < 0 or x > sz[1] or y < 0 or y > sz[2] then
+        return nil
+    end
+
+    local contentY = sz[2] - y + self.scroll
+    for _, id in ipairs(self.blocks) do
+        local r = self.renders[id]
+        if contentY >= r.offsetY and contentY < r.offsetY + r.contentH then
+            return id
+        end
+    end
+    return nil
+end
+
+---@protected
+---@param events table
+function MarkdownParser:_updateContextMenu(events)
+    for _, ev in ipairs(events) do
+        local data = ev.data
+        if ev.type == "MouseButtonDown" and data then
+            local localMouse = self:_screenToLocalMouse(input.mousePosition(), false)
+            if not self:_isOverContextMenu(localMouse) then
+                self:closeContextMenu()
+                if data.mouseButton == "MouseRight" then
+                    local id = self:_blockAt(localMouse)
+                    if id then
+                        self:_openContextMenu(id, localMouse)
+                    end
+                end
+            end
+        elseif ev.type == "KeyDown" and data and data.key == "Esc" then
+            self:closeContextMenu()
+        end
+    end
+end
+
+-- ────────────────────────── Lifecycle ─────────────────────────────────────────
+
+function MarkdownParser.init()
+    if not pane then
+        assert(
+            false,
+            "MarkdownParser: init - pane API is not available. Make sure to include this script in an interface script and that it is loaded before the main script."
+        )
+    end
+end
+
+function MarkdownParser.updateAll(dt)
     local events = input.events() or {}
     for _, parser in pairs(activeParsers) do
         if parser.scrollConfig.scrollEnabled and parser.thumbCanvas then
             parser:_updateScroll(dt, events)
+        end
+        if parser._contextMenu then
+            parser:_updateContextMenu(events)
         end
     end
 end
@@ -1512,12 +1710,11 @@ function MarkdownParser.uninit()
         if p then
             debugMessage("Uninitializing parser %s", sb.print(p.uuid))
             p:clear()
-            local path = p.lytPath
+            p:_destroyContextMenu()
+            p:_removeLayout()
             p = nil
-            pane.removeWidget(path)
         else
             debugMessage("Parser %s was already removed for somehow", sb.print(parser))
         end
     end
 end
-

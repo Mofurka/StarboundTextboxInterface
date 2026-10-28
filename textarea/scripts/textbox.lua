@@ -54,6 +54,10 @@ local function dotWidget(name)
     return "." .. name
 end
 
+local function widgetExists(name)
+    return type(name) == "string" and name ~= "" and widget.getSize(name) ~= nil
+end
+
 local DEBUG = false
 local PAD = 2
 local CARET_BLINK_INTERVAL = 0.5
@@ -334,39 +338,46 @@ function Textbox:setup(widgetName, options)
     inst.scrollLinesPerWheel = options.scrollLinesPerWheel or inst.scrollLinesPerWheel
     inst.verticalAlign = options.verticalAlign or "bottom"
     inst.textOffsetY = options.textOffsetY or 0
-    inst.parentWidgetPath = widgetName
     inst.caretColor = options.caretColor or CARET_COLOR
     inst._screenOffset = options.screenOffset or inst._screenOffset
     inst.unfocusOnClickOutside = options.unfocusOnClickOutside
     inst.textFont = options.textFont or "hobo"
     inst._paneFeature = Textbox.findPaneFeature()
 
-    if widgetName:find("%.") then
-        inst._isChild = true
-    end
+    inst._isChild = widgetExists(widgetName)
+    inst.parentWidgetPath = inst._isChild and widgetName or nil
 
     local lytShort = WIDGET_SHORTS.lyt .. inst.uuid
 
     local rect = options.rect
     if not rect then
+        if not inst._isChild then
+            sb.logError("Textbox:setup - Widget '%s' does not exist, the rect option is required", tostring(widgetName))
+            return nil
+        end
         local sz = widget.getSize(widgetName)
         rect = { 0, 0, sz[1], sz[2] }
     end
     inst._layoutOffset = { rect[1], rect[2] }
 
-    local lytPath = widgetName .. "." .. lytShort
+    local lytPath = inst._isChild and (widgetName .. "." .. lytShort) or lytShort
     inst.path = lytPath
 
-    -- Store the UUID in the parent widget
-    local parentWidgetData = widget.getData(widgetName) or {}
-    if parentWidgetData.__tbx_uuid then
-        widget.removeChild(widgetName, WIDGET_SHORTS.lyt .. parentWidgetData.__tbx_uuid)
-    end
-    parentWidgetData.__tbx_uuid = inst.uuid
-    widget.setData(widgetName, parentWidgetData)
-
     local lytConfig = { type = "layout", rect = rect, layoutType = "basic" }
-    widget.addChild(widgetName, lytConfig, lytShort)
+
+    if inst._isChild then
+        -- Store the UUID in the parent widget
+        local parentWidgetData = widget.getData(widgetName) or {}
+        if parentWidgetData.__tbx_uuid then
+            widget.removeChild(widgetName, WIDGET_SHORTS.lyt .. parentWidgetData.__tbx_uuid)
+        end
+        parentWidgetData.__tbx_uuid = inst.uuid
+        widget.setData(widgetName, parentWidgetData)
+
+        widget.addChild(widgetName, lytConfig, lytShort)
+    else
+        pane.addWidget(lytConfig, lytShort)
+    end
 
     local canvasRect = { 0, 0, rect[3], rect[4] - 1 }
     inst.rect = { 0, 0, rect[3], rect[4] }
@@ -2154,7 +2165,7 @@ function Textbox:_getParentWidgetLocalPosition()
         return vec2.add(firstParentPos, childChain)
     end
 
-    return widget.getPosition(self.parentWidgetPath)
+    return { 0, 0 }
 end
 
 ---@protected
@@ -3081,7 +3092,11 @@ function Textbox:_cleanup()
     self:_clearFakeTextboxPasteCoroutine(true)
     self:clear()
     self:_destroyMeasureLabel()
-    pane.removeWidget(self.path)
+    if self._isChild then
+        widget.removeChild(self.parentWidgetPath, WIDGET_SHORTS.lyt .. self.uuid)
+    else
+        pane.removeWidget(self.path)
+    end
 end
 
 -- ─────────────────────────── Getters/Setters ─────────────────────────────────

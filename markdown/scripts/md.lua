@@ -48,7 +48,7 @@ function uninit()
     MarkdownParser.uninit()
 end
 
-require("/scripts/utils/utf8.lua")
+require("/interface/StarboundTextboxInterface/scripts/utf8/utf8.lua")
 require("/scripts/vec2.lua")
 require("/interface/StarboundTextboxInterface/combobox/scripts/combobox.lua")
 ---@class MarkdownParser
